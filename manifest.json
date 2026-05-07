@@ -1,8 +1,8 @@
 {
-  "domain": "marstek_manager",
-  "name": "Marstek Battery & HEMS Manager",
+  "domain": "ctrl_next_hems",
+  "name": "CTRL-NEXT HEMS",
   "version": "0.1.0",
-  "documentation": "https://github.com/jouw-github/marstek_manager",
+  "documentation": "https://github.com/jouw-github/ctrl_next_hems",
   "dependencies": [],
   "codeowners": ["@jouw-naam"],
   "requirements": [],
