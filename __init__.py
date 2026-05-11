@@ -18,7 +18,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     await controller.start()
     
-    _LOGGER.info("CTRL-NEXT HEMS (Simulation Mode) gestart!")
+    _LOGGER.info("CTRL-NEXT HEMS gestart met actieve Modbus-sturing")
     return True
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:

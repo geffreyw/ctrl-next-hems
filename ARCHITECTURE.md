@@ -1,14 +1,15 @@
 # Project Context: CTRL-NEXT HEMS
 Dit is een custom Home Assistant integratie voor slim energiemanagement (HEMS) gericht op het aansturen van Marstek batterijen via Modbus.
 
-## Huidige Status: "Shadow Mode" / Digital Twin
-We draaien momenteel een simulatie. De integratie stuurt geen daadwerkelijke commando's naar de batterijen, maar berekent wat het zou doen en schrijft dit naar virtuele sensoren. Dit gebruiken we als A/B test tegenover het eigen Marstek algoritme (Anti-Feed modus).
+## Huidige Status: Actieve Modbus-sturing
+De integratie stuurt nu daadwerkelijke Home Assistant `switch`/`select`/`number` entiteiten aan om de Marstek batterijen te laden, ontladen of te stoppen. De virtuele sensoren blijven beschikbaar als zicht op het laatst gevraagde batterijvermogen en de berekende virtuele P1-uitkomst.
 
 ## Kernlogica (controller.py)
 - **Feed-Forward Sturing:** We berekenen het huisverbruik wiskundig: `P1_Netvermogen + Bat1_AC_Power + Bat2_AC_Power`.
 - **Load Balancing:** Het benodigde vermogen wordt door 2 gedeeld voor de twee batterijen.
 - **Deadband (Dode Band):** Standaard 15W. Kleine schommelingen rond de nul worden genegeerd om pendelen te voorkomen.
-- **Modbus Cache Threshold:** Standaard 25W. We sturen pas een nieuw virtueel commando als de gewenste wijziging groter is dan 25W ten opzichte van het vorige commando.
+- **Modbus Cache Threshold:** Standaard 25W. We sturen pas een nieuw batterijcommando als de gewenste wijziging groter is dan 25W ten opzichte van het vorige commando.
+- **Failsafe:** Bij uitschakelen, unload of een fout in de control loop worden beide batterijen naar stop gezet, work mode teruggezet naar Anti-Feed of een equivalente vendor-optie, en Modbus control uitgeschakeld.
 
 ## Architectuur / Bestanden
 - `config_flow.py`: Vraagt 15 entiteiten op (P1 meter, AC power per batterij, charge/discharge targets, etc.).
