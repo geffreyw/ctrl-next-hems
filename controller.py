@@ -13,6 +13,8 @@ from .const import (
     CONF_BAT2_FORCE_MODE,
     CONF_BAT2_MODBUS_SWITCH,
     CONF_BAT2_WORK_MODE,
+    CONF_BATTERY_1_SOC,
+    CONF_BATTERY_2_SOC,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -23,6 +25,12 @@ _FORCE_MODE_CHARGE     = "charge"
 _FORCE_MODE_DISCHARGE  = "discharge"
 _WORK_MODE_ANTI_FEED   = "anti_feed"
 _FAILSAFE_POWER_W      = 2500.0
+
+# Hardware minimum SoC is ~12%; 14% geeft 2% softwaremarge zodat we geen
+# ontlaadopdrachten sturen terwijl de batterij al bijna bij zijn hardwaregrens zit.
+_SOC_MIN_DISCHARGE = 14.0
+# Boven 99% heeft laden geen zin meer.
+_SOC_MAX_CHARGE    = 99.0
 
 class CtrlNextController:
     def __init__(self, hass: HomeAssistant, config_data: dict):
@@ -192,33 +200,55 @@ class CtrlNextController:
                     bat2_ac = self._get_float_state(self.config.get("bat2_ac_power"))
                     
                     huisverbruik = p1_actual + bat1_ac + bat2_ac
-                    doel_per_bat = huisverbruik / 2
-                    
+
+                    soc = {
+                        "1": self._get_float_state(self.config.get(CONF_BATTERY_1_SOC)),
+                        "2": self._get_float_state(self.config.get(CONF_BATTERY_2_SOC)),
+                    }
+
+                    # Bepaal globale mode op basis van huisverbruik
+                    if abs(huisverbruik) <= self.deadband:
+                        global_mode = _FORCE_MODE_STOP
+                    elif huisverbruik > 0:
+                        global_mode = _FORCE_MODE_DISCHARGE
+                    else:
+                        global_mode = _FORCE_MODE_CHARGE
+
+                    # Bepaal welke batterijen beschikbaar zijn voor de gewenste mode
+                    if global_mode == _FORCE_MODE_DISCHARGE:
+                        available = [idx for idx in ["1", "2"] if soc[idx] > _SOC_MIN_DISCHARGE]
+                    elif global_mode == _FORCE_MODE_CHARGE:
+                        available = [idx for idx in ["1", "2"] if soc[idx] < _SOC_MAX_CHARGE]
+                    else:
+                        available = []
+
+                    # Verdeel het totale gevraagde vermogen over de beschikbare batterijen
+                    if available:
+                        power_per_bat = min(abs(huisverbruik) / len(available), self.max_power_per_bat)
+                    else:
+                        power_per_bat = 0.0
+
                     for bat_idx in ["1", "2"]:
-                        abs_gewenst = 0.0
-                        mode = _FORCE_MODE_STOP
-                        v_val = 0.0
+                        if bat_idx in available:
+                            mode = global_mode
+                            abs_gewenst = power_per_bat
+                            v_val = abs_gewenst if mode == _FORCE_MODE_DISCHARGE else -abs_gewenst
+                        else:
+                            mode = _FORCE_MODE_STOP
+                            abs_gewenst = 0.0
+                            v_val = 0.0
 
-                        if abs(doel_per_bat) > self.deadband:
-                            abs_gewenst = min(abs(doel_per_bat), self.max_power_per_bat)
-                            if doel_per_bat > 0:
-                                mode = _FORCE_MODE_DISCHARGE
-                                v_val = abs_gewenst
-                            else:
-                                mode = _FORCE_MODE_CHARGE
-                                v_val = -abs_gewenst
-
-                        # Check of we de drempelwaarde voorbij zijn
                         if self.last_mode[bat_idx] != mode or abs(self.last_power[bat_idx] - abs_gewenst) >= self.cache_threshold:
                             await self._apply_battery_command(bat_idx, mode, abs_gewenst)
                             self.virtual_bat_power[bat_idx] = v_val
                             self.last_mode[bat_idx] = mode
                             self.last_power[bat_idx] = abs_gewenst
-                            
+
                             _LOGGER.info(
-                                "[CTRL-NEXT] Bat %s update: Huisverbruik=%.0fW | Actie: %s met %.0fW",
+                                "[CTRL-NEXT] Bat %s update: Huisverbruik=%.0fW SoC=%.1f%% | Actie: %s met %.0fW",
                                 bat_idx,
                                 huisverbruik,
+                                soc[bat_idx],
                                 mode,
                                 abs_gewenst,
                             )
