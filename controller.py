@@ -4,6 +4,7 @@ import time
 
 from aiohttp import ClientError
 from homeassistant.core import HomeAssistant
+from homeassistant.util import dt as dt_util
 from homeassistant.helpers.dispatcher import async_dispatcher_send # NIEUW
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from .const import (
@@ -31,6 +32,9 @@ _FORCE_MODE_STOP       = "stop"
 _FORCE_MODE_CHARGE     = "charge"
 _FORCE_MODE_DISCHARGE  = "discharge"
 _WORK_MODE_ANTI_FEED   = "anti_feed"
+_LOW_TARIFF_START_HOUR = 23
+_LOW_TARIFF_END_HOUR   = 7
+_LOW_TARIFF_PEAK_W     = 2200.0
 
 # Hardware minimum SoC is ~12%; 14% geeft 2% softwaremarge zodat we geen
 # ontlaadopdrachten sturen terwijl de batterij al bijna bij zijn hardwaregrens zit.
@@ -141,6 +145,20 @@ class CtrlNextController:
                 else:
                     raise ValueError(f"JSON key '{self._p1_http_json_key}' niet gevonden")
         return float(value)
+
+    def _is_low_tariff_window(self):
+        now = dt_util.now()
+        return now.hour >= _LOW_TARIFF_START_HOUR or now.hour < _LOW_TARIFF_END_HOUR
+
+    def _get_regel_huisverbruik(self, huisverbruik):
+        if not self._is_low_tariff_window():
+            return huisverbruik
+
+        # Tijdens dal/superdal ontladen we alleen boven de piekgrens.
+        if huisverbruik > _LOW_TARIFF_PEAK_W:
+            return huisverbruik - _LOW_TARIFF_PEAK_W
+
+        return min(huisverbruik, 0.0)
 
     async def _get_p1_actual_power(self):
         if not self._p1_http_url:
@@ -288,11 +306,12 @@ class CtrlNextController:
                     
                     huisverbruik = p1_actual + bat1_ac + bat2_ac
                     self.huisverbruik_value = huisverbruik
+                    regel_huisverbruik = self._get_regel_huisverbruik(huisverbruik)
 
                     # Low-pass filter dempt spikes in meting en maakt de regeling rustiger.
                     self._filtered_huisverbruik = (
                         (1.0 - self.filter_alpha) * self._filtered_huisverbruik
-                        + self.filter_alpha * huisverbruik
+                        + self.filter_alpha * regel_huisverbruik
                     )
 
                     soc = {
