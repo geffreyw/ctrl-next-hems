@@ -60,6 +60,17 @@ class CtrlNextController:
         self.max_power_per_bat = 2500.0
         self.deadband = 15.0 
         self.cache_threshold = 25.0
+
+        # Anti-oscillatie parameters voor 1s loop.
+        self.filter_alpha = 0.35
+        self.deadband_release_margin = 35.0
+        self.min_power_per_bat = 120.0
+        self.max_power_step_per_cycle = 300.0
+        self.min_mode_hold_seconds = 3.0
+
+        self._filtered_huisverbruik = 0.0
+        self._global_mode = _FORCE_MODE_STOP
+        self._last_global_mode_change = 0.0
         self._service_lock = asyncio.Lock()
         
         self.last_mode = {"1": _FORCE_MODE_STOP, "2": _FORCE_MODE_STOP}
@@ -278,18 +289,47 @@ class CtrlNextController:
                     huisverbruik = p1_actual + bat1_ac + bat2_ac
                     self.huisverbruik_value = huisverbruik
 
+                    # Low-pass filter dempt spikes in meting en maakt de regeling rustiger.
+                    self._filtered_huisverbruik = (
+                        (1.0 - self.filter_alpha) * self._filtered_huisverbruik
+                        + self.filter_alpha * huisverbruik
+                    )
+
                     soc = {
                         "1": self._get_float_state(self.config.get(CONF_BATTERY_1_SOC)),
                         "2": self._get_float_state(self.config.get(CONF_BATTERY_2_SOC)),
                     }
 
-                    # Bepaal globale mode op basis van huisverbruik
-                    if abs(huisverbruik) <= self.deadband:
-                        global_mode = _FORCE_MODE_STOP
-                    elif huisverbruik > 0:
-                        global_mode = _FORCE_MODE_DISCHARGE
+                    # Hysterese voorkomt flippen rond 0W; hold voorkomt snelle modewissels.
+                    filtered_abs = abs(self._filtered_huisverbruik)
+                    stop_threshold = self.deadband
+                    start_threshold = self.deadband + self.deadband_release_margin
+
+                    if self._global_mode == _FORCE_MODE_STOP:
+                        if filtered_abs <= start_threshold:
+                            global_mode = _FORCE_MODE_STOP
+                        elif self._filtered_huisverbruik > 0:
+                            global_mode = _FORCE_MODE_DISCHARGE
+                        else:
+                            global_mode = _FORCE_MODE_CHARGE
                     else:
-                        global_mode = _FORCE_MODE_CHARGE
+                        if filtered_abs <= stop_threshold:
+                            global_mode = _FORCE_MODE_STOP
+                        elif self._filtered_huisverbruik > 0:
+                            global_mode = _FORCE_MODE_DISCHARGE
+                        else:
+                            global_mode = _FORCE_MODE_CHARGE
+
+                    now = time.monotonic()
+                    if (
+                        global_mode != self._global_mode
+                        and (now - self._last_global_mode_change) < self.min_mode_hold_seconds
+                    ):
+                        global_mode = self._global_mode
+
+                    if global_mode != self._global_mode:
+                        self._global_mode = global_mode
+                        self._last_global_mode_change = now
 
                     # Bepaal welke batterijen beschikbaar zijn voor de gewenste mode
                     if global_mode == _FORCE_MODE_DISCHARGE:
@@ -301,18 +341,33 @@ class CtrlNextController:
 
                     # Verdeel het totale gevraagde vermogen over de beschikbare batterijen
                     if available:
-                        power_per_bat = min(abs(huisverbruik) / len(available), self.max_power_per_bat)
+                        target_power_per_bat = min(
+                            abs(self._filtered_huisverbruik) / len(available),
+                            self.max_power_per_bat,
+                        )
+                        if 0.0 < target_power_per_bat < self.min_power_per_bat:
+                            target_power_per_bat = self.min_power_per_bat
                     else:
-                        power_per_bat = 0.0
+                        target_power_per_bat = 0.0
 
                     for bat_idx in ["1", "2"]:
                         if bat_idx in available:
                             mode = global_mode
-                            abs_gewenst = power_per_bat
+                            prev_abs = self.last_power[bat_idx] if self.last_mode[bat_idx] == mode else 0.0
+                            delta = target_power_per_bat - prev_abs
+                            if abs(delta) > self.max_power_step_per_cycle:
+                                abs_gewenst = prev_abs + (self.max_power_step_per_cycle if delta > 0 else -self.max_power_step_per_cycle)
+                            else:
+                                abs_gewenst = target_power_per_bat
                             v_val = abs_gewenst if mode == _FORCE_MODE_DISCHARGE else -abs_gewenst
                         else:
                             mode = _FORCE_MODE_STOP
-                            abs_gewenst = 0.0
+                            prev_abs = self.last_power[bat_idx] if self.last_mode[bat_idx] == _FORCE_MODE_STOP else 0.0
+                            delta = -prev_abs
+                            if abs(delta) > self.max_power_step_per_cycle:
+                                abs_gewenst = prev_abs - self.max_power_step_per_cycle
+                            else:
+                                abs_gewenst = 0.0
                             v_val = 0.0
 
                         if self.last_mode[bat_idx] != mode or abs(self.last_power[bat_idx] - abs_gewenst) >= self.cache_threshold:
@@ -322,9 +377,10 @@ class CtrlNextController:
                             self.last_power[bat_idx] = abs_gewenst
 
                             _LOGGER.info(
-                                "[CTRL-NEXT] Bat %s update: Huisverbruik=%.0fW SoC=%.1f%% | Actie: %s met %.0fW",
+                                "[CTRL-NEXT] Bat %s update: Huisverbruik=%.0fW (filtered=%.0fW) SoC=%.1f%% | Actie: %s met %.0fW",
                                 bat_idx,
                                 huisverbruik,
+                                self._filtered_huisverbruik,
                                 soc[bat_idx],
                                 mode,
                                 abs_gewenst,
