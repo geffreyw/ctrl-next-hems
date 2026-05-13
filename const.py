@@ -2,6 +2,9 @@ DOMAIN = "ctrl_next_hems"
 
 # Sensoren algemeen
 CONF_P1_SENSOR = "p1_sensor"
+CONF_P1_HTTP_URL = "p1_http_url"
+CONF_P1_HTTP_JSON_KEY = "p1_http_json_key"
+CONF_P1_HTTP_TIMEOUT = "p1_http_timeout"
 
 # Instellingen voor de sturing
 CONF_DEADBAND = "deadband"

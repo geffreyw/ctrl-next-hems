@@ -1,7 +1,11 @@
 import asyncio
 import logging
+import time
+
+from aiohttp import ClientError
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.dispatcher import async_dispatcher_send # NIEUW
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from .const import (
     CONF_BAT1_CHARGE,
     CONF_BAT1_DISCHARGE,
@@ -15,6 +19,9 @@ from .const import (
     CONF_BAT2_WORK_MODE,
     CONF_BATTERY_1_SOC,
     CONF_BATTERY_2_SOC,
+    CONF_P1_HTTP_JSON_KEY,
+    CONF_P1_HTTP_TIMEOUT,
+    CONF_P1_HTTP_URL,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -42,6 +49,14 @@ class CtrlNextController:
         
         self.virtual_bat_power = {"1": 0.0, "2": 0.0}
         self.virtual_p1_value = 0.0
+        self.http_p1_value = 0.0
+        self.huisverbruik_value = 0.0
+
+        self._http_session = async_get_clientsession(hass)
+        self._p1_http_url = (self.config.get(CONF_P1_HTTP_URL) or "").strip()
+        self._p1_http_json_key = (self.config.get(CONF_P1_HTTP_JSON_KEY) or "power").strip()
+        self._p1_http_timeout = float(self.config.get(CONF_P1_HTTP_TIMEOUT, 2.0))
+        self._last_http_error_log = 0.0
 
         self.max_power_per_bat = 2500.0
         self.deadband = 15.0 
@@ -106,6 +121,43 @@ class CtrlNextController:
         }
         return mapping[bat_idx]
 
+    def _extract_json_value(self, payload):
+        # Ondersteunt een geneste key zoals "data.power"
+        value = payload
+        if self._p1_http_json_key:
+            for part in self._p1_http_json_key.split("."):
+                if isinstance(value, dict) and part in value:
+                    value = value[part]
+                else:
+                    raise ValueError(f"JSON key '{self._p1_http_json_key}' niet gevonden")
+        return float(value)
+
+    async def _get_p1_actual_power(self):
+        if not self._p1_http_url:
+            value = self._get_float_state(self.config.get("p1_sensor"))
+            self.http_p1_value = value
+            return value
+
+        try:
+            timeout = max(0.1, self._p1_http_timeout)
+            async with self._http_session.get(self._p1_http_url, timeout=timeout) as response:
+                response.raise_for_status()
+                payload = await response.json(content_type=None)
+                value = self._extract_json_value(payload)
+                self.http_p1_value = value
+                return value
+        except (ClientError, ValueError, TypeError):
+            now = time.monotonic()
+            if now - self._last_http_error_log >= 30:
+                _LOGGER.warning(
+                    "HTTP polling van P1 mislukt, fallback naar HA sensor '%s'",
+                    self.config.get("p1_sensor"),
+                )
+                self._last_http_error_log = now
+            value = self._get_float_state(self.config.get("p1_sensor"))
+            self.http_p1_value = value
+            return value
+
     async def _call_entity_service(self, domain, service, entity_id, service_data=None):
         if not entity_id:
             return
@@ -116,11 +168,13 @@ class CtrlNextController:
 
         await self.hass.services.async_call(domain, service, payload, blocking=True)
 
-    async def _set_select_option(self, entity_id, option):
+    async def _set_select_option(self, entity_id, option, force=False):
         if not entity_id:
+            _LOGGER.warning("Select-option overgeslagen: lege entity_id voor optie '%s'", option)
             return
+
         current_state = self.hass.states.get(entity_id)
-        if current_state and current_state.state == option:
+        if not force and current_state and current_state.state == option:
             return
         await self._call_entity_service("select", "select_option", entity_id, {"option": option})
 
@@ -170,16 +224,46 @@ class CtrlNextController:
 
     async def _set_battery_failsafe(self, bat_idx, reason):
         entities = self._get_battery_entities(bat_idx)
+        work_mode_entity = entities["work_mode"]
+        charge_entity = entities["charge"]
+
+        _LOGGER.warning("Failsafe gestart voor batterij %s (%s)", bat_idx, reason)
+        _LOGGER.warning(
+            "Failsafe batterij %s: target work_mode=%s, target charge=%.0fW",
+            bat_idx,
+            _WORK_MODE_ANTI_FEED,
+            _FAILSAFE_POWER_W,
+        )
 
         async with self._service_lock:
-            await self._set_select_option(entities["work_mode"], _WORK_MODE_ANTI_FEED)
-            await self._set_number_value(entities["charge"], _FAILSAFE_POWER_W)
-            await self._set_number_value(entities["discharge"], _FAILSAFE_POWER_W)
+            before_work_mode = self.hass.states.get(work_mode_entity)
+            before_charge = self.hass.states.get(charge_entity)
+            _LOGGER.warning(
+                "Failsafe batterij %s BEFORE: work_mode=%s charge=%s",
+                bat_idx,
+                before_work_mode.state if before_work_mode else "onbekend",
+                before_charge.state if before_charge else "onbekend",
+            )
+
+            # Forceer de service-call zodat een mogelijk stale HA-state de call niet blokkeert.
+            await self._set_select_option(work_mode_entity, _WORK_MODE_ANTI_FEED, force=True)
+            await self._set_number_value(charge_entity, _FAILSAFE_POWER_W)
+
+            await asyncio.sleep(0.25)
+
+            after_work_mode = self.hass.states.get(work_mode_entity)
+            after_charge = self.hass.states.get(charge_entity)
+            _LOGGER.warning(
+                "Failsafe batterij %s AFTER: work_mode=%s charge=%s",
+                bat_idx,
+                after_work_mode.state if after_work_mode else "onbekend",
+                after_charge.state if after_charge else "onbekend",
+            )
 
         self.virtual_bat_power[bat_idx] = 0.0
         self.last_mode[bat_idx] = _FORCE_MODE_STOP
         self.last_power[bat_idx] = 0.0
-        _LOGGER.info("Batterij %s naar Anti-Feed teruggezet (%s)", bat_idx, reason)
+        _LOGGER.warning("Batterij %s naar Anti-Feed teruggezet (%s)", bat_idx, reason)
 
     async def _set_all_batteries_failsafe(self, reason):
         for bat_idx in ["1", "2"]:
@@ -195,11 +279,12 @@ class CtrlNextController:
         while self.running:
             if self.enabled:
                 try:
-                    p1_actual = self._get_float_state(self.config.get("p1_sensor"))
+                    p1_actual = await self._get_p1_actual_power()
                     bat1_ac = self._get_float_state(self.config.get("bat1_ac_power"))
                     bat2_ac = self._get_float_state(self.config.get("bat2_ac_power"))
                     
                     huisverbruik = p1_actual + bat1_ac + bat2_ac
+                    self.huisverbruik_value = huisverbruik
 
                     soc = {
                         "1": self._get_float_state(self.config.get(CONF_BATTERY_1_SOC)),

@@ -11,8 +11,9 @@ PLATFORMS = ["switch", "number", "sensor"]
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data.setdefault(DOMAIN, {})
-    
-    controller = CtrlNextController(hass, entry.data)
+
+    config_data = {**entry.data, **entry.options}
+    controller = CtrlNextController(hass, config_data)
     hass.data[DOMAIN][entry.entry_id] = controller
     
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
