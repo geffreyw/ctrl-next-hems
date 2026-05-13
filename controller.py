@@ -31,7 +31,6 @@ _FORCE_MODE_STOP       = "stop"
 _FORCE_MODE_CHARGE     = "charge"
 _FORCE_MODE_DISCHARGE  = "discharge"
 _WORK_MODE_ANTI_FEED   = "anti_feed"
-_FAILSAFE_POWER_W      = 2500.0
 
 # Hardware minimum SoC is ~12%; 14% geeft 2% softwaremarge zodat we geen
 # ontlaadopdrachten sturen terwijl de batterij al bijna bij zijn hardwaregrens zit.
@@ -225,39 +224,32 @@ class CtrlNextController:
     async def _set_battery_failsafe(self, bat_idx, reason):
         entities = self._get_battery_entities(bat_idx)
         work_mode_entity = entities["work_mode"]
-        charge_entity = entities["charge"]
 
         _LOGGER.warning("Failsafe gestart voor batterij %s (%s)", bat_idx, reason)
         _LOGGER.warning(
-            "Failsafe batterij %s: target work_mode=%s, target charge=%.0fW",
+            "Failsafe batterij %s: target work_mode=%s",
             bat_idx,
             _WORK_MODE_ANTI_FEED,
-            _FAILSAFE_POWER_W,
         )
 
         async with self._service_lock:
             before_work_mode = self.hass.states.get(work_mode_entity)
-            before_charge = self.hass.states.get(charge_entity)
             _LOGGER.warning(
-                "Failsafe batterij %s BEFORE: work_mode=%s charge=%s",
+                "Failsafe batterij %s BEFORE: work_mode=%s",
                 bat_idx,
                 before_work_mode.state if before_work_mode else "onbekend",
-                before_charge.state if before_charge else "onbekend",
             )
 
             # Forceer de service-call zodat een mogelijk stale HA-state de call niet blokkeert.
             await self._set_select_option(work_mode_entity, _WORK_MODE_ANTI_FEED, force=True)
-            await self._set_number_value(charge_entity, _FAILSAFE_POWER_W)
 
             await asyncio.sleep(0.25)
 
             after_work_mode = self.hass.states.get(work_mode_entity)
-            after_charge = self.hass.states.get(charge_entity)
             _LOGGER.warning(
-                "Failsafe batterij %s AFTER: work_mode=%s charge=%s",
+                "Failsafe batterij %s AFTER: work_mode=%s",
                 bat_idx,
                 after_work_mode.state if after_work_mode else "onbekend",
-                after_charge.state if after_charge else "onbekend",
             )
 
         self.virtual_bat_power[bat_idx] = 0.0
