@@ -2,9 +2,10 @@
   "domain": "ctrl_next_hems",
   "name": "CTRL-NEXT HEMS",
   "version": "0.1.0",
-  "documentation": "https://github.com/jouw-github/ctrl_next_hems",
+  "documentation": "https://github.com/geffreyw/ctrl-next-hems",
+  "issue_tracker": "https://github.com/geffreyw/ctrl-next-hems/issues",
   "dependencies": [],
-  "codeowners": ["@jouw-naam"],
+  "codeowners": ["@geffreyw"],
   "requirements": [],
   "iot_class": "local_polling",
   "config_flow": true
