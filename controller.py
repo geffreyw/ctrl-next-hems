@@ -4,7 +4,6 @@ import time
 
 from aiohttp import ClientError
 from homeassistant.core import HomeAssistant
-from homeassistant.util import dt as dt_util
 from homeassistant.helpers.dispatcher import async_dispatcher_send # NIEUW
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from .const import (
@@ -20,6 +19,9 @@ from .const import (
     CONF_BAT2_WORK_MODE,
     CONF_BATTERY_1_SOC,
     CONF_BATTERY_2_SOC,
+    CONF_CONTROL_MODE,
+    CONTROL_MODE_ANTI_FEED,
+    CONTROL_MODE_PEAK_SHAVING,
     CONF_P1_HTTP_JSON_KEY,
     CONF_P1_HTTP_TIMEOUT,
     CONF_P1_HTTP_URL,
@@ -32,9 +34,7 @@ _FORCE_MODE_STOP       = "stop"
 _FORCE_MODE_CHARGE     = "charge"
 _FORCE_MODE_DISCHARGE  = "discharge"
 _WORK_MODE_ANTI_FEED   = "anti_feed"
-_LOW_TARIFF_START_HOUR = 23
-_LOW_TARIFF_END_HOUR   = 7
-_LOW_TARIFF_PEAK_W     = 2200.0
+_DEFAULT_PEAK_SHAVING_LIMIT_W = 2200.0
 
 # Hardware minimum SoC is ~12%; 14% geeft 2% softwaremarge zodat we geen
 # ontlaadopdrachten sturen terwijl de batterij al bijna bij zijn hardwaregrens zit.
@@ -51,8 +51,7 @@ class CtrlNextController:
         self._task = None
         
         self.virtual_bat_power = {"1": 0.0, "2": 0.0}
-        self.virtual_p1_value = 0.0
-        self.http_p1_value = 0.0
+        self.p1_used_value = 0.0
         self.huisverbruik_value = 0.0
 
         self._http_session = async_get_clientsession(hass)
@@ -61,7 +60,20 @@ class CtrlNextController:
         self._p1_http_timeout = float(self.config.get(CONF_P1_HTTP_TIMEOUT, 2.0))
         self._last_http_error_log = 0.0
 
+        self.control_modes = [CONTROL_MODE_ANTI_FEED, CONTROL_MODE_PEAK_SHAVING]
+        self.control_mode = self.config.get(CONF_CONTROL_MODE, CONTROL_MODE_ANTI_FEED)
+        if self.control_mode not in self.control_modes:
+            _LOGGER.warning(
+                "Onbekende control_mode '%s', fallback naar '%s'",
+                self.control_mode,
+                CONTROL_MODE_ANTI_FEED,
+            )
+            self.control_mode = CONTROL_MODE_ANTI_FEED
+
         self.max_power_per_bat = 2500.0
+
+        # Regelparameters (configureerbaar via number-entities).
+        self.peak_shaving_limit_w = _DEFAULT_PEAK_SHAVING_LIMIT_W
         self.deadband = 15.0 
         self.cache_threshold = 25.0
 
@@ -146,24 +158,32 @@ class CtrlNextController:
                     raise ValueError(f"JSON key '{self._p1_http_json_key}' niet gevonden")
         return float(value)
 
-    def _is_low_tariff_window(self):
-        now = dt_util.now()
-        return now.hour >= _LOW_TARIFF_START_HOUR or now.hour < _LOW_TARIFF_END_HOUR
+    def set_control_mode(self, mode: str):
+        if mode not in self.control_modes:
+            _LOGGER.warning("Ongeldige control_mode ontvangen: %s", mode)
+            return
+
+        if mode != self.control_mode:
+            _LOGGER.info("Control mode gewijzigd van '%s' naar '%s'", self.control_mode, mode)
+            self.control_mode = mode
+
+    def get_control_mode(self) -> str:
+        return self.control_mode
 
     def _get_regel_huisverbruik(self, huisverbruik):
-        if not self._is_low_tariff_window():
+        if self.control_mode != CONTROL_MODE_PEAK_SHAVING:
             return huisverbruik
 
-        # Tijdens dal/superdal ontladen we alleen boven de piekgrens.
-        if huisverbruik > _LOW_TARIFF_PEAK_W:
-            return huisverbruik - _LOW_TARIFF_PEAK_W
+        # In peak-shaving modus ontladen we alleen boven de piekgrens.
+        if huisverbruik > self.peak_shaving_limit_w:
+            return huisverbruik - self.peak_shaving_limit_w
 
         return min(huisverbruik, 0.0)
 
     async def _get_p1_actual_power(self):
         if not self._p1_http_url:
             value = self._get_float_state(self.config.get("p1_sensor"))
-            self.http_p1_value = value
+            self.p1_used_value = value
             return value
 
         try:
@@ -172,7 +192,7 @@ class CtrlNextController:
                 response.raise_for_status()
                 payload = await response.json(content_type=None)
                 value = self._extract_json_value(payload)
-                self.http_p1_value = value
+                self.p1_used_value = value
                 return value
         except (ClientError, ValueError, TypeError):
             now = time.monotonic()
@@ -183,7 +203,7 @@ class CtrlNextController:
                 )
                 self._last_http_error_log = now
             value = self._get_float_state(self.config.get("p1_sensor"))
-            self.http_p1_value = value
+            self.p1_used_value = value
             return value
 
     async def _call_entity_service(self, domain, service, entity_id, service_data=None):
@@ -293,7 +313,7 @@ class CtrlNextController:
             except Exception:
                 _LOGGER.exception("Failsafe mislukt voor batterij %s", bat_idx)
 
-        self.virtual_p1_value = self._get_float_state(self.config.get("p1_sensor"))
+        self.p1_used_value = self._get_float_state(self.config.get("p1_sensor"))
         async_dispatcher_send(self.hass, "ctrl_next_update")
 
     async def _loop(self):
@@ -405,8 +425,6 @@ class CtrlNextController:
                                 abs_gewenst,
                             )
 
-                    self.virtual_p1_value = huisverbruik - (self.virtual_bat_power["1"] + self.virtual_bat_power["2"])
-                    
                     # Stuur een signaal naar de sensoren om te verversen in de UI
                     async_dispatcher_send(self.hass, "ctrl_next_update")
                     

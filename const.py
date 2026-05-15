@@ -6,6 +6,15 @@ CONF_P1_HTTP_URL = "p1_http_url"
 CONF_P1_HTTP_JSON_KEY = "p1_http_json_key"
 CONF_P1_HTTP_TIMEOUT = "p1_http_timeout"
 
+# HEMS regeling
+CONF_CONTROL_MODE = "control_mode"
+CONTROL_MODE_ANTI_FEED = "anti_feed"
+CONTROL_MODE_PEAK_SHAVING = "peak_shaving"
+CONTROL_MODES = [
+    CONTROL_MODE_ANTI_FEED,
+    CONTROL_MODE_PEAK_SHAVING,
+]
+
 # Instellingen voor de sturing
 CONF_DEADBAND = "deadband"
 CONF_CACHE_THRESHOLD = "cache_threshold"

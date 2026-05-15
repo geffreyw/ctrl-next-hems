@@ -6,8 +6,8 @@ from .controller import CtrlNextController
 
 _LOGGER = logging.getLogger(__name__)
 
-# Voeg "sensor" toe aan de platforms
-PLATFORMS = ["switch", "number", "sensor"]
+# Voeg "select" toe aan de platforms
+PLATFORMS = ["switch", "number", "sensor", "select"]
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data.setdefault(DOMAIN, {})

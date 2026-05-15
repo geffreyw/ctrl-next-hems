@@ -1,7 +1,7 @@
 {
   "domain": "ctrl_next_hems",
   "name": "CTRL-NEXT HEMS",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "documentation": "https://github.com/geffreyw/ctrl-next-hems",
   "issue_tracker": "https://github.com/geffreyw/ctrl-next-hems/issues",
   "dependencies": [],
