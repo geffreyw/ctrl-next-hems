@@ -35,6 +35,8 @@ _FORCE_MODE_CHARGE     = "charge"
 _FORCE_MODE_DISCHARGE  = "discharge"
 _WORK_MODE_ANTI_FEED   = "anti_feed"
 _DEFAULT_PEAK_SHAVING_LIMIT_W = 2200.0
+_DEFAULT_GRID_CHARGE_TARGET_SOC = 100.0
+_DEFAULT_GRID_CHARGE_MAX_POWER_W = 500.0
 
 # Hardware minimum SoC is ~12%; 14% geeft 2% softwaremarge zodat we geen
 # ontlaadopdrachten sturen terwijl de batterij al bijna bij zijn hardwaregrens zit.
@@ -74,6 +76,9 @@ class CtrlNextController:
 
         # Regelparameters (configureerbaar via number-entities).
         self.peak_shaving_limit_w = _DEFAULT_PEAK_SHAVING_LIMIT_W
+        self.grid_charge_enabled = False
+        self.grid_charge_target_soc = _DEFAULT_GRID_CHARGE_TARGET_SOC
+        self.grid_charge_max_power_w = _DEFAULT_GRID_CHARGE_MAX_POWER_W
         self.deadband = 15.0 
         self.cache_threshold = 25.0
 
@@ -169,6 +174,31 @@ class CtrlNextController:
 
     def get_control_mode(self) -> str:
         return self.control_mode
+
+    def set_grid_charge_enabled(self, enabled: bool):
+        self.grid_charge_enabled = enabled
+
+    def get_grid_charge_enabled(self) -> bool:
+        return self.grid_charge_enabled
+
+    def _get_mode_import_limit(self):
+        if self.control_mode == CONTROL_MODE_PEAK_SHAVING:
+            return self.peak_shaving_limit_w
+        return 0.0
+
+    def _get_grid_charge_target_soc(self):
+        return max(0.0, min(self.grid_charge_target_soc, _SOC_MAX_CHARGE))
+
+    def _get_grid_charge_request(self, huisverbruik, soc):
+        if not self.grid_charge_enabled:
+            return 0.0
+
+        target_soc = self._get_grid_charge_target_soc()
+        if not any(soc[idx] < target_soc for idx in ["1", "2"]):
+            return 0.0
+
+        grid_headroom = max(self._get_mode_import_limit() - max(huisverbruik, 0.0), 0.0)
+        return min(grid_headroom, self.grid_charge_max_power_w)
 
     def _get_regel_huisverbruik(self, huisverbruik):
         if self.control_mode != CONTROL_MODE_PEAK_SHAVING:
@@ -328,16 +358,18 @@ class CtrlNextController:
                     self.huisverbruik_value = huisverbruik
                     regel_huisverbruik = self._get_regel_huisverbruik(huisverbruik)
 
-                    # Low-pass filter dempt spikes in meting en maakt de regeling rustiger.
-                    self._filtered_huisverbruik = (
-                        (1.0 - self.filter_alpha) * self._filtered_huisverbruik
-                        + self.filter_alpha * regel_huisverbruik
-                    )
-
                     soc = {
                         "1": self._get_float_state(self.config.get(CONF_BATTERY_1_SOC)),
                         "2": self._get_float_state(self.config.get(CONF_BATTERY_2_SOC)),
                     }
+                    grid_charge_request = self._get_grid_charge_request(huisverbruik, soc)
+                    control_power = regel_huisverbruik - grid_charge_request
+
+                    # Low-pass filter dempt spikes in meting en maakt de regeling rustiger.
+                    self._filtered_huisverbruik = (
+                        (1.0 - self.filter_alpha) * self._filtered_huisverbruik
+                        + self.filter_alpha * control_power
+                    )
 
                     # Hysterese voorkomt flippen rond 0W; hold voorkomt snelle modewissels.
                     filtered_abs = abs(self._filtered_huisverbruik)
@@ -374,7 +406,11 @@ class CtrlNextController:
                     if global_mode == _FORCE_MODE_DISCHARGE:
                         available = [idx for idx in ["1", "2"] if soc[idx] > _SOC_MIN_DISCHARGE]
                     elif global_mode == _FORCE_MODE_CHARGE:
-                        available = [idx for idx in ["1", "2"] if soc[idx] < _SOC_MAX_CHARGE]
+                        target_soc = self._get_grid_charge_target_soc()
+                        if self.grid_charge_enabled:
+                            available = [idx for idx in ["1", "2"] if soc[idx] < target_soc]
+                        else:
+                            available = [idx for idx in ["1", "2"] if soc[idx] < _SOC_MAX_CHARGE]
                     else:
                         available = []
 
@@ -416,9 +452,11 @@ class CtrlNextController:
                             self.last_power[bat_idx] = abs_gewenst
 
                             _LOGGER.info(
-                                "[CTRL-NEXT] Bat %s update: Huisverbruik=%.0fW (filtered=%.0fW) SoC=%.1f%% | Actie: %s met %.0fW",
+                                "[CTRL-NEXT] Bat %s update: Huisverbruik=%.0fW (regel=%.0fW, netladen=%.0fW, filtered=%.0fW) SoC=%.1f%% | Actie: %s met %.0fW",
                                 bat_idx,
                                 huisverbruik,
+                                regel_huisverbruik,
+                                grid_charge_request,
                                 self._filtered_huisverbruik,
                                 soc[bat_idx],
                                 mode,

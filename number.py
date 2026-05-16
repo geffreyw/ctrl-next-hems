@@ -6,6 +6,24 @@ async def async_setup_entry(hass, entry, async_add_entities):
     controller = hass.data[DOMAIN][entry.entry_id]
     specs = [
         {
+            "name": "Netlaad Doel SoC (%)",
+            "param": "grid_charge_target_soc",
+            "min": 0,
+            "max": 100,
+            "step": 1,
+            "icon": "mdi:battery-charging-80",
+            "unit": "%",
+        },
+        {
+            "name": "Max Netlaad Vermogen (W)",
+            "param": "grid_charge_max_power_w",
+            "min": 0,
+            "max": 3000,
+            "step": 50,
+            "icon": "mdi:ev-station",
+            "unit": "W",
+        },
+        {
             "name": "Peak Shaving Limiet (W)",
             "param": "peak_shaving_limit_w",
             "min": 500,

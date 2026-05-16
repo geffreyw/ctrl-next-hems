@@ -49,6 +49,11 @@ Na installatie maakt de integratie entiteiten aan onder één apparaat (`CTRL-NE
 - CTRL-NEXT HEMS Actief
 	- Zet de controller-lus aan of uit.
 
+- HEMS Netladen Toestaan
+  - Laat de controller extra laadvraag vanaf het net toevoegen zolang de actieve regeling dat toelaat.
+  - In `anti_feed` is de importlimiet 0 W, dus deze functie voegt daar geen extra netladen toe.
+  - In `peak_shaving` gebruikt de controller vrije ruimte onder de Peak Shaving Limiet om de batterijen bij te laden.
+
 ### Select
 
 - HEMS Regeling Modus
@@ -66,6 +71,14 @@ Na het toevoegen van de integratie maakt Home Assistant meerdere number- en sele
   - `peak_shaving`: ontlaadt alleen boven de ingestelde Peak Shaving Limiet en vermijdt ontladen bij normaal positief verbruik onder die limiet.
 
 ### Number-entiteiten
+
+- HEMS Netlaad Doel SoC (%)
+  - Wat dit instelt: Het maximale SoC-doel waar de controller naartoe mag laden zolang `HEMS Netladen Toestaan` actief is.
+  - Gedragseffect: Lagere waarden stoppen eerder met laden. Hogere waarden laten langer doorladen richting de ochtend.
+
+- HEMS Max Netlaad Vermogen (W)
+  - Wat dit instelt: Het maximale extra laadvermogen dat de controller van het net mag vragen.
+  - Gedragseffect: Hogere waarden laden sneller bij vanuit het net. Lagere waarden houden het netladen rustiger. Standaard is dit 500 W.
 
 - HEMS Peak Shaving Limiet (W)
   - Wat dit instelt: De ontlaaddrempel die alleen in `peak_shaving` modus wordt gebruikt.
@@ -102,6 +115,9 @@ Na het toevoegen van de integratie maakt Home Assistant meerdere number- en sele
 ## Tuning-richtlijnen
 
 - Start conservatief: verhoog eerst stabiliteit en daarna pas responsiviteit.
+- Wil je 's nachts goedkoop laden: zet `HEMS Netladen Toestaan` aan via een automation, kies een `HEMS Netlaad Doel SoC (%)`, en beperk het tempo met `HEMS Max Netlaad Vermogen (W)`.
+- In `anti_feed` zal netladen geen extra import veroorzaken, omdat de importlimiet daar 0 W blijft.
+- In `peak_shaving` laadt de controller alleen bij zolang er nog ruimte is onder de ingestelde Peak Shaving Limiet.
 - Zie je frequente modewissels: verhoog Deadband, Deadband Release Margin en/of Minimale Mode Hold Tijd.
 - Reageert het systeem te traag: verhoog Filter Alpha of Max Vermogen Stap Per Cyclus.
 - Zijn batterij-setpoints te onrustig: verhoog Modbus Cache Drempel.
