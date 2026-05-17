@@ -1,0 +1,104 @@
+# HEMS package
+# Plaats dit bestand op Home Assistant onder:
+# /config/packages/hems/hems_automations.yaml
+
+input_boolean:
+  hems_nachtladen_actief:
+    name: HEMS Nachtladen Actief
+    icon: mdi:weather-night
+
+input_number:
+  hems_nachtladen_doel_soc:
+    name: HEMS Nachtladen Doel SoC
+    min: 10
+    max: 100
+    step: 1
+    unit_of_measurement: "%"
+    mode: slider
+    icon: mdi:battery-charging-70
+    initial: 80
+
+  hems_nachtladen_max_vermogen:
+    name: HEMS Nachtladen Max Vermogen
+    min: 0
+    max: 3000
+    step: 50
+    unit_of_measurement: W
+    mode: slider
+    icon: mdi:ev-station
+    initial: 500
+
+script:
+  hems_sync_nachtladen_naar_integratie:
+    alias: HEMS Sync Nachtladen Naar Integratie
+    mode: queued
+    sequence:
+      - variables:
+          entity_switch_netladen: switch.hems_netladen_toestaan
+          entity_number_doel_soc: number.hems_netlaad_doel_soc
+          entity_number_max_vermogen: number.hems_max_netlaad_vermogen_w
+
+      - service: number.set_value
+        target:
+          entity_id: "{{ entity_number_doel_soc }}"
+        data:
+          value: "{{ states('input_number.hems_nachtladen_doel_soc') | float(80) }}"
+
+      - service: number.set_value
+        target:
+          entity_id: "{{ entity_number_max_vermogen }}"
+        data:
+          value: "{{ states('input_number.hems_nachtladen_max_vermogen') | float(500) }}"
+
+      - choose:
+          - conditions:
+              - condition: state
+                entity_id: input_boolean.hems_nachtladen_actief
+                state: "on"
+            sequence:
+              - service: switch.turn_on
+                target:
+                  entity_id: "{{ entity_switch_netladen }}"
+        default:
+          - service: switch.turn_off
+            target:
+              entity_id: "{{ entity_switch_netladen }}"
+
+automation:
+  - id: hems_nachtladen_start
+    alias: HEMS Nachtladen Start
+    description: Start nachtlaadvenster en sync instellingen naar integratie
+    trigger:
+      - platform: time
+        at: "23:00:00"
+    action:
+      - service: input_boolean.turn_on
+        target:
+          entity_id: input_boolean.hems_nachtladen_actief
+      - service: script.hems_sync_nachtladen_naar_integratie
+
+  - id: hems_nachtladen_stop
+    alias: HEMS Nachtladen Stop
+    description: Stop nachtlaadvenster en sync instellingen naar integratie
+    trigger:
+      - platform: time
+        at: "07:00:00"
+    action:
+      - service: input_boolean.turn_off
+        target:
+          entity_id: input_boolean.hems_nachtladen_actief
+      - service: script.hems_sync_nachtladen_naar_integratie
+
+  - id: hems_nachtladen_sync_bij_wijziging
+    alias: HEMS Nachtladen Sync Bij Wijziging
+    description: Sync package helpers telkens wanneer een nachtlaadinstelling wijzigt
+    trigger:
+      - platform: state
+        entity_id:
+          - input_boolean.hems_nachtladen_actief
+          - input_number.hems_nachtladen_doel_soc
+          - input_number.hems_nachtladen_max_vermogen
+      - platform: homeassistant
+        event: start
+    action:
+      - service: script.hems_sync_nachtladen_naar_integratie
