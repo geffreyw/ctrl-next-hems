@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import time
+from urllib.parse import urlsplit
 
 from aiohttp import ClientError
 from homeassistant.core import HomeAssistant
@@ -22,9 +23,7 @@ from .const import (
     CONF_CONTROL_MODE,
     CONTROL_MODE_ANTI_FEED,
     CONTROL_MODE_PEAK_SHAVING,
-    CONF_P1_HTTP_JSON_KEY,
-    CONF_P1_HTTP_TIMEOUT,
-    CONF_P1_HTTP_URL,
+    CONF_P1_IP_ADDRESS,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -43,6 +42,8 @@ _DEFAULT_GRID_CHARGE_MAX_POWER_W = 500.0
 _SOC_MIN_DISCHARGE = 14.0
 # Boven 99% heeft laden geen zin meer.
 _SOC_MAX_CHARGE    = 99.0
+_HOMEWIZARD_DATA_PATH = "/api/v1/data"
+_P1_HTTP_TIMEOUT_SECONDS = 2.0
 
 class CtrlNextController:
     def __init__(self, hass: HomeAssistant, config_data: dict):
@@ -57,9 +58,13 @@ class CtrlNextController:
         self.huisverbruik_value = 0.0
 
         self._http_session = async_get_clientsession(hass)
-        self._p1_http_url = (self.config.get(CONF_P1_HTTP_URL) or "").strip()
-        self._p1_http_json_key = (self.config.get(CONF_P1_HTTP_JSON_KEY) or "power").strip()
-        self._p1_http_timeout = float(self.config.get(CONF_P1_HTTP_TIMEOUT, 2.0))
+        self._p1_ip_address = self._normalize_host(self.config.get(CONF_P1_IP_ADDRESS) or "")
+        self._p1_http_url = self._build_p1_data_url(self._p1_ip_address)
+
+        # Backward compatibility: bestaande installaties met oude URL-setting.
+        if not self._p1_http_url:
+            self._p1_http_url = self._normalize_legacy_url(self.config.get("p1_http_url") or "")
+
         self._last_http_error_log = 0.0
 
         self.control_modes = [CONTROL_MODE_ANTI_FEED, CONTROL_MODE_PEAK_SHAVING]
@@ -152,16 +157,36 @@ class CtrlNextController:
         }
         return mapping[bat_idx]
 
-    def _extract_json_value(self, payload):
-        # Ondersteunt een geneste key zoals "data.power"
-        value = payload
-        if self._p1_http_json_key:
-            for part in self._p1_http_json_key.split("."):
-                if isinstance(value, dict) and part in value:
-                    value = value[part]
-                else:
-                    raise ValueError(f"JSON key '{self._p1_http_json_key}' niet gevonden")
-        return float(value)
+    @staticmethod
+    def _normalize_host(host_value):
+        host = (host_value or "").strip()
+        if not host:
+            return ""
+
+        # Laat zowel "192.168.1.10" als "http://192.168.1.10" toe.
+        if "://" in host:
+            parsed = urlsplit(host)
+            host = parsed.netloc or parsed.path
+
+        return host.split("/")[0].strip()
+
+    def _build_p1_data_url(self, host_value):
+        host = self._normalize_host(host_value)
+        if not host:
+            return ""
+        return f"http://{host}{_HOMEWIZARD_DATA_PATH}"
+
+    def _normalize_legacy_url(self, url_value):
+        legacy_url = (url_value or "").strip().rstrip("/")
+        if not legacy_url:
+            return ""
+
+        # Als oude config al direct naar /api/v1/data wijst, behouden.
+        if legacy_url.endswith(_HOMEWIZARD_DATA_PATH):
+            return legacy_url
+
+        # Als enkel host geconfigureerd stond, converteer naar hardcoded endpoint.
+        return self._build_p1_data_url(legacy_url)
 
     def set_control_mode(self, mode: str):
         if mode not in self.control_modes:
@@ -217,14 +242,13 @@ class CtrlNextController:
             return value
 
         try:
-            timeout = max(0.1, self._p1_http_timeout)
-            async with self._http_session.get(self._p1_http_url, timeout=timeout) as response:
+            async with self._http_session.get(self._p1_http_url, timeout=_P1_HTTP_TIMEOUT_SECONDS) as response:
                 response.raise_for_status()
                 payload = await response.json(content_type=None)
-                value = self._extract_json_value(payload)
+                value = float(payload["active_power_w"])
                 self.p1_used_value = value
                 return value
-        except (ClientError, ValueError, TypeError):
+        except (ClientError, ValueError, TypeError, KeyError):
             now = time.monotonic()
             if now - self._last_http_error_log >= 30:
                 _LOGGER.warning(

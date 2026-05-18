@@ -33,7 +33,7 @@ Na installatie maakt de integratie entiteiten aan onder één apparaat (`CTRL-NE
 
 - HEMS P1 Vermogen Gebruikt
 	- De exacte P1-waarde die de controller gebruikt om het huisverbruik te berekenen.
-	- Bron is HTTP JSON indien geconfigureerd; fallback is de geconfigureerde HA P1-sensor.
+  - Bron is HomeWizard P1 API (`http://<ip>/api/v1/data`, veld `active_power_w`) indien IP geconfigureerd; fallback is de geconfigureerde HA P1-sensor.
 
 - HEMS Huisverbruik Vermogen
 	- Berekend als: `P1 gebruikt + batterij 1 AC vermogen + batterij 2 AC vermogen`.

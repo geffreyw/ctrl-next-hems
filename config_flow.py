@@ -18,20 +18,8 @@ class CtrlNextConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         data_schema = vol.Schema({
             vol.Required(CONF_P1_SENSOR): selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor")),
-            vol.Optional(CONF_P1_HTTP_URL, default=""): selector.TextSelector(
-                selector.TextSelectorConfig(type=selector.TextSelectorType.URL)
-            ),
-            vol.Optional(CONF_P1_HTTP_JSON_KEY, default="power"): selector.TextSelector(
+            vol.Optional(CONF_P1_IP_ADDRESS, default=""): selector.TextSelector(
                 selector.TextSelectorConfig(type=selector.TextSelectorType.TEXT)
-            ),
-            vol.Optional(CONF_P1_HTTP_TIMEOUT, default=2.0): selector.NumberSelector(
-                selector.NumberSelectorConfig(
-                    min=0.5,
-                    max=10,
-                    step=0.5,
-                    mode=selector.NumberSelectorMode.BOX,
-                    unit_of_measurement="s",
-                )
             ),
             # Batterij 1
             vol.Required(CONF_BATTERY_1_SOC): selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor")),
@@ -64,20 +52,8 @@ class CtrlNextOptionsFlow(config_entries.OptionsFlow):
         current = {**self._config_entry.data, **self._config_entry.options}
 
         data_schema = vol.Schema({
-            vol.Optional(CONF_P1_HTTP_URL, default=current.get(CONF_P1_HTTP_URL, "")): selector.TextSelector(
-                selector.TextSelectorConfig(type=selector.TextSelectorType.URL)
-            ),
-            vol.Optional(CONF_P1_HTTP_JSON_KEY, default=current.get(CONF_P1_HTTP_JSON_KEY, "power")): selector.TextSelector(
+            vol.Optional(CONF_P1_IP_ADDRESS, default=current.get(CONF_P1_IP_ADDRESS, "")): selector.TextSelector(
                 selector.TextSelectorConfig(type=selector.TextSelectorType.TEXT)
-            ),
-            vol.Optional(CONF_P1_HTTP_TIMEOUT, default=float(current.get(CONF_P1_HTTP_TIMEOUT, 2.0))): selector.NumberSelector(
-                selector.NumberSelectorConfig(
-                    min=0.5,
-                    max=10,
-                    step=0.5,
-                    mode=selector.NumberSelectorMode.BOX,
-                    unit_of_measurement="s",
-                )
             ),
         })
 
