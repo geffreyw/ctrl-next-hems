@@ -5,12 +5,54 @@ from .const import (
     CONTROL_MODE_ANTI_FEED,
     CONTROL_MODES,
     DOMAIN,
+    OPERATING_MODE_MANUAL,
+    OPERATING_MODES,
 )
 
 
 async def async_setup_entry(hass, entry, async_add_entities):
     controller = hass.data[DOMAIN][entry.entry_id]
-    async_add_entities([HemsControlModeSelect(controller)])
+    async_add_entities([
+        HemsOperatingModeSelect(controller),
+        HemsControlModeSelect(controller),
+    ])
+
+
+class HemsOperatingModeSelect(RestoreEntity, SelectEntity):
+    def __init__(self, controller):
+        self._controller = controller
+        self._attr_name = "HEMS Bedrijfsmodus"
+        self._attr_unique_id = f"{controller.config.get('p1_sensor')}_operating_mode"
+        self._attr_icon = "mdi:home-lightning-bolt"
+        self._attr_options = OPERATING_MODES
+
+    @property
+    def device_info(self):
+        return {
+            "identifiers": {(DOMAIN, self._controller.config.get('p1_sensor'))},
+            "name": "CTRL-NEXT HEMS Systeem",
+            "manufacturer": "CTRL-NEXT",
+            "model": "HEMS AI Controller",
+        }
+
+    async def async_added_to_hass(self):
+        await super().async_added_to_hass()
+        last_state = await self.async_get_last_state()
+        if last_state and last_state.state in OPERATING_MODES:
+            await self._controller.set_operating_mode(last_state.state)
+        elif self._controller.get_operating_mode() not in OPERATING_MODES:
+            await self._controller.set_operating_mode(OPERATING_MODE_MANUAL)
+        self.async_write_ha_state()
+
+    @property
+    def current_option(self):
+        return self._controller.get_operating_mode()
+
+    async def async_select_option(self, option: str):
+        if option not in OPERATING_MODES:
+            return
+        await self._controller.set_operating_mode(option)
+        self.async_write_ha_state()
 
 
 class HemsControlModeSelect(RestoreEntity, SelectEntity):

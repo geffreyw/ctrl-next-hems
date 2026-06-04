@@ -1,4 +1,6 @@
 import asyncio
+from datetime import datetime, timedelta
+from functools import partial
 import logging
 import time
 from urllib.parse import urlsplit
@@ -9,11 +11,13 @@ from homeassistant.helpers.dispatcher import async_dispatcher_send # NIEUW
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from .const import (
     CONF_BAT1_CHARGE,
+    CONF_BAT1_AC_POWER,
     CONF_BAT1_DISCHARGE,
     CONF_BAT1_FORCE_MODE,
     CONF_BAT1_MODBUS_SWITCH,
     CONF_BAT1_WORK_MODE,
     CONF_BAT2_CHARGE,
+    CONF_BAT2_AC_POWER,
     CONF_BAT2_DISCHARGE,
     CONF_BAT2_FORCE_MODE,
     CONF_BAT2_MODBUS_SWITCH,
@@ -21,9 +25,73 @@ from .const import (
     CONF_BATTERY_1_SOC,
     CONF_BATTERY_2_SOC,
     CONF_CONTROL_MODE,
+    CONF_FORECAST_SOLAR_NEXT_HOUR,
+    CONF_FORECAST_SOLAR_PEAK_TODAY,
+    CONF_FORECAST_SOLAR_PEAK_TOMORROW,
+    CONF_FORECAST_SOLAR_POWER_IN_24H,
+    CONF_FORECAST_SOLAR_POWER_NOW,
+    CONF_FORECAST_SOLAR_REMAINING_TODAY,
+    CONF_FORECAST_SOLAR_THIS_HOUR,
+    CONF_FORECAST_SOLAR_TODAY,
+    CONF_FORECAST_SOLAR_TOMORROW,
+    CONF_OPERATING_MODE,
+    CONF_PLANNER_BATTERY_COUNT,
+    CONF_PLANNER_BATTERY_NOMINAL_KWH_EACH,
+    CONF_PLANNER_DASHBOARD_PATH,
+    CONF_PLANNER_IMPORT_LIMIT_W,
+    CONF_PLANNER_MIN_RESERVE_SOC,
+    CONF_PLANNER_NOTIFY_SERVICE,
+    CONF_PLANNER_SAFETY_MARGIN_PCT,
     CONTROL_MODE_ANTI_FEED,
     CONTROL_MODE_PEAK_SHAVING,
+    DEFAULT_BAT1_AC_POWER,
+    DEFAULT_BAT1_CHARGE,
+    DEFAULT_BAT1_DISCHARGE,
+    DEFAULT_BAT1_FORCE_MODE,
+    DEFAULT_BAT1_MODBUS_SWITCH,
+    DEFAULT_BAT1_WORK_MODE,
+    DEFAULT_BAT2_AC_POWER,
+    DEFAULT_BAT2_CHARGE,
+    DEFAULT_BAT2_DISCHARGE,
+    DEFAULT_BAT2_FORCE_MODE,
+    DEFAULT_BAT2_MODBUS_SWITCH,
+    DEFAULT_BAT2_WORK_MODE,
+    DEFAULT_BATTERY_1_SOC,
+    DEFAULT_BATTERY_2_SOC,
+    DEFAULT_FORECAST_SOLAR_NEXT_HOUR,
+    DEFAULT_FORECAST_SOLAR_PEAK_TODAY,
+    DEFAULT_FORECAST_SOLAR_PEAK_TOMORROW,
+    DEFAULT_FORECAST_SOLAR_POWER_IN_24H,
+    DEFAULT_FORECAST_SOLAR_POWER_NOW,
+    DEFAULT_FORECAST_SOLAR_REMAINING_TODAY,
+    DEFAULT_FORECAST_SOLAR_THIS_HOUR,
+    DEFAULT_FORECAST_SOLAR_TODAY,
+    DEFAULT_FORECAST_SOLAR_TOMORROW,
+    DEFAULT_OPERATING_MODE,
+    DEFAULT_P1_IP_ADDRESS,
+    DEFAULT_P1_SENSOR,
+    DEFAULT_PLANNER_BATTERY_COUNT,
+    DEFAULT_PLANNER_BATTERY_NOMINAL_KWH_EACH,
+    DEFAULT_PLANNER_DASHBOARD_PATH,
+    DEFAULT_PLANNER_IMPORT_LIMIT_W,
+    DEFAULT_PLANNER_MIN_RESERVE_SOC,
+    DEFAULT_PLANNER_NOTIFY_SERVICE,
+    DEFAULT_PLANNER_SAFETY_MARGIN_PCT,
+    OPERATING_MODE_MANUAL,
+    OPERATING_MODE_OFF,
+    OPERATING_MODE_SMART,
+    OPERATING_MODES,
     CONF_P1_IP_ADDRESS,
+    CONF_P1_SENSOR,
+)
+from .planner import (
+    EVENING_PEAK_END,
+    EVENING_PEAK_START,
+    MORNING_PEAK_START,
+    SUPER_DAL_END,
+    PlannerInputs,
+    build_plan,
+    period_for_timestamp,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -44,13 +112,53 @@ _SOC_MIN_DISCHARGE = 14.0
 _SOC_MAX_CHARGE    = 99.0
 _HOMEWIZARD_DATA_PATH = "/api/v1/data"
 _P1_HTTP_TIMEOUT_SECONDS = 2.0
+_SMART_PLAN_DISPATCH = "ctrl_next_plan_update"
+
+DEFAULT_CONFIG = {
+    CONF_P1_SENSOR: DEFAULT_P1_SENSOR,
+    CONF_P1_IP_ADDRESS: DEFAULT_P1_IP_ADDRESS,
+    CONF_BATTERY_1_SOC: DEFAULT_BATTERY_1_SOC,
+    CONF_BAT1_AC_POWER: DEFAULT_BAT1_AC_POWER,
+    CONF_BAT1_CHARGE: DEFAULT_BAT1_CHARGE,
+    CONF_BAT1_DISCHARGE: DEFAULT_BAT1_DISCHARGE,
+    CONF_BAT1_FORCE_MODE: DEFAULT_BAT1_FORCE_MODE,
+    CONF_BAT1_MODBUS_SWITCH: DEFAULT_BAT1_MODBUS_SWITCH,
+    CONF_BAT1_WORK_MODE: DEFAULT_BAT1_WORK_MODE,
+    CONF_BATTERY_2_SOC: DEFAULT_BATTERY_2_SOC,
+    CONF_BAT2_AC_POWER: DEFAULT_BAT2_AC_POWER,
+    CONF_BAT2_CHARGE: DEFAULT_BAT2_CHARGE,
+    CONF_BAT2_DISCHARGE: DEFAULT_BAT2_DISCHARGE,
+    CONF_BAT2_FORCE_MODE: DEFAULT_BAT2_FORCE_MODE,
+    CONF_BAT2_MODBUS_SWITCH: DEFAULT_BAT2_MODBUS_SWITCH,
+    CONF_BAT2_WORK_MODE: DEFAULT_BAT2_WORK_MODE,
+    CONF_FORECAST_SOLAR_TODAY: DEFAULT_FORECAST_SOLAR_TODAY,
+    CONF_FORECAST_SOLAR_REMAINING_TODAY: DEFAULT_FORECAST_SOLAR_REMAINING_TODAY,
+    CONF_FORECAST_SOLAR_TOMORROW: DEFAULT_FORECAST_SOLAR_TOMORROW,
+    CONF_FORECAST_SOLAR_THIS_HOUR: DEFAULT_FORECAST_SOLAR_THIS_HOUR,
+    CONF_FORECAST_SOLAR_NEXT_HOUR: DEFAULT_FORECAST_SOLAR_NEXT_HOUR,
+    CONF_FORECAST_SOLAR_POWER_NOW: DEFAULT_FORECAST_SOLAR_POWER_NOW,
+    CONF_FORECAST_SOLAR_POWER_IN_24H: DEFAULT_FORECAST_SOLAR_POWER_IN_24H,
+    CONF_FORECAST_SOLAR_PEAK_TODAY: DEFAULT_FORECAST_SOLAR_PEAK_TODAY,
+    CONF_FORECAST_SOLAR_PEAK_TOMORROW: DEFAULT_FORECAST_SOLAR_PEAK_TOMORROW,
+    CONF_PLANNER_NOTIFY_SERVICE: DEFAULT_PLANNER_NOTIFY_SERVICE,
+    CONF_PLANNER_DASHBOARD_PATH: DEFAULT_PLANNER_DASHBOARD_PATH,
+    CONF_PLANNER_BATTERY_NOMINAL_KWH_EACH: DEFAULT_PLANNER_BATTERY_NOMINAL_KWH_EACH,
+    CONF_PLANNER_BATTERY_COUNT: DEFAULT_PLANNER_BATTERY_COUNT,
+    CONF_PLANNER_MIN_RESERVE_SOC: DEFAULT_PLANNER_MIN_RESERVE_SOC,
+    CONF_PLANNER_SAFETY_MARGIN_PCT: DEFAULT_PLANNER_SAFETY_MARGIN_PCT,
+    CONF_PLANNER_IMPORT_LIMIT_W: DEFAULT_PLANNER_IMPORT_LIMIT_W,
+    CONF_OPERATING_MODE: OPERATING_MODE_MANUAL,
+}
 
 class CtrlNextController:
     def __init__(self, hass: HomeAssistant, config_data: dict):
         self.hass = hass
-        self.config = config_data
+        self.config = {**DEFAULT_CONFIG, **config_data}
         self.running = False
-        self.enabled = True
+        self.operating_mode = self.config.get(CONF_OPERATING_MODE, DEFAULT_OPERATING_MODE)
+        if self.operating_mode not in OPERATING_MODES:
+            self.operating_mode = OPERATING_MODE_MANUAL
+        self.enabled = self.operating_mode != OPERATING_MODE_OFF
         self._task = None
         
         self.virtual_bat_power = {"1": 0.0, "2": 0.0}
@@ -86,6 +194,11 @@ class CtrlNextController:
         self.grid_charge_max_power_w = _DEFAULT_GRID_CHARGE_MAX_POWER_W
         self.deadband = 15.0 
         self.cache_threshold = 25.0
+        self.planner_battery_nominal_kwh_each = float(self.config.get(CONF_PLANNER_BATTERY_NOMINAL_KWH_EACH, DEFAULT_PLANNER_BATTERY_NOMINAL_KWH_EACH))
+        self.planner_battery_count = float(self.config.get(CONF_PLANNER_BATTERY_COUNT, DEFAULT_PLANNER_BATTERY_COUNT))
+        self.planner_min_reserve_soc = float(self.config.get(CONF_PLANNER_MIN_RESERVE_SOC, DEFAULT_PLANNER_MIN_RESERVE_SOC))
+        self.planner_safety_margin_pct = float(self.config.get(CONF_PLANNER_SAFETY_MARGIN_PCT, DEFAULT_PLANNER_SAFETY_MARGIN_PCT))
+        self.planner_import_limit_w = float(self.config.get(CONF_PLANNER_IMPORT_LIMIT_W, DEFAULT_PLANNER_IMPORT_LIMIT_W))
 
         # Anti-oscillatie parameters voor 1s loop.
         self.filter_alpha = 0.35
@@ -101,6 +214,9 @@ class CtrlNextController:
         
         self.last_mode = {"1": _FORCE_MODE_STOP, "2": _FORCE_MODE_STOP}
         self.last_power = {"1": 0.0, "2": 0.0}
+        self.smart_plan = self._empty_plan()
+        self._last_plan_refresh = None
+        self._last_plan_notification_date = None
 
     async def start(self):
         self.running = True
@@ -116,14 +232,35 @@ class CtrlNextController:
                 pass
         await self._set_all_batteries_failsafe("controller gestopt")
 
-    async def set_enabled(self, status: bool):
-        self.enabled = status
-        if status:
-            self.last_mode = {"1": "Unknown", "2": "Unknown"}
-            self.last_power = {"1": -1.0, "2": -1.0}
+    def get_operating_mode(self) -> str:
+        return self.operating_mode
+
+    def invalidate_smart_plan(self):
+        self._last_plan_refresh = None
+        async_dispatcher_send(self.hass, _SMART_PLAN_DISPATCH)
+
+    async def set_operating_mode(self, mode: str):
+        if mode not in OPERATING_MODES:
+            _LOGGER.warning("Ongeldige operating mode ontvangen: %s", mode)
             return
 
-        await self._set_all_batteries_failsafe("controller uitgeschakeld")
+        if mode == self.operating_mode:
+            return
+
+        _LOGGER.info("Bedrijfsmodus gewijzigd van '%s' naar '%s'", self.operating_mode, mode)
+        self.operating_mode = mode
+        self.enabled = mode != OPERATING_MODE_OFF
+
+        if mode == OPERATING_MODE_OFF:
+            await self._set_all_batteries_failsafe("bedrijfsmodus off")
+        else:
+            self.last_mode = {"1": "Unknown", "2": "Unknown"}
+            self.last_power = {"1": -1.0, "2": -1.0}
+            async_dispatcher_send(self.hass, "ctrl_next_update")
+            async_dispatcher_send(self.hass, _SMART_PLAN_DISPATCH)
+
+    async def set_enabled(self, status: bool):
+        await self.set_operating_mode(OPERATING_MODE_MANUAL if status else OPERATING_MODE_OFF)
 
     def _get_float_state(self, entity_id):
         # Voorkom crash als de configuratie leeg is
@@ -344,6 +481,9 @@ class CtrlNextController:
             )
 
             # Forceer de service-call zodat een mogelijk stale HA-state de call niet blokkeert.
+            await self._set_number_value(entities["charge"], 0.0)
+            await self._set_number_value(entities["discharge"], 0.0)
+            await self._set_select_option(entities["force_mode"], _FORCE_MODE_STOP, force=True)
             await self._set_select_option(work_mode_entity, _WORK_MODE_ANTI_FEED, force=True)
 
             await asyncio.sleep(0.25)
@@ -370,129 +510,415 @@ class CtrlNextController:
         self.p1_used_value = self._get_float_state(self.config.get("p1_sensor"))
         async_dispatcher_send(self.hass, "ctrl_next_update")
 
+    def _empty_plan(self):
+        return {
+            "summary": "Nog geen Smart-plan berekend.",
+            "target_soc_morning": 0,
+            "target_soc_evening": 0,
+            "target_soc_after_super_dal": 0,
+            "grid_charge_needed_kwh": 0,
+            "planned_grid_charge_power_w": 0,
+            "current_headroom_w": 0,
+            "expected_min_soc": 0,
+            "free_surplus_kwh": 0,
+            "morning_need_kwh": 0,
+            "evening_need_kwh": 0,
+            "day_charge_potential_kwh": 0,
+            "timestamps": [],
+            "expected_soc": [],
+            "expected_load_w": [],
+            "expected_solar_w": [],
+            "expected_import_w": [],
+            "mode": [],
+            "reasons": [],
+            "profile_quality": "nog niet berekend",
+            "generated_at": None,
+        }
+
+    def _get_average_soc(self, soc=None):
+        soc = soc or {
+            "1": self._get_float_state(self.config.get(CONF_BATTERY_1_SOC)),
+            "2": self._get_float_state(self.config.get(CONF_BATTERY_2_SOC)),
+        }
+        return (soc["1"] + soc["2"]) / 2.0
+
+    def _get_total_capacity_kwh(self):
+        return max(self.planner_battery_nominal_kwh_each * self.planner_battery_count, 0.1)
+
+    def _get_float_config(self, key, default):
+        try:
+            return float(self.config.get(key, default))
+        except (TypeError, ValueError):
+            return float(default)
+
+    def _get_datetime_state(self, entity_id):
+        state = self.hass.states.get(entity_id)
+        if not state or state.state in ["unknown", "unavailable", ""]:
+            return None
+        try:
+            return datetime.fromisoformat(state.state)
+        except ValueError:
+            return None
+
+    async def _get_load_profile(self):
+        fallback = max(self.huisverbruik_value, self._get_float_state(self.config.get(CONF_P1_SENSOR)), 300.0)
+        buckets_same_weekday = [[] for _ in range(96)]
+        buckets_all = [[] for _ in range(96)]
+        entity_ids = [
+            "sensor.ctrl_next_hems_systeem_hems_huisverbruik_vermogen",
+            "sensor.hems_huisverbruik_vermogen",
+            self.config.get(CONF_P1_SENSOR),
+        ]
+        end = datetime.now().astimezone()
+        start = end - timedelta(days=14)
+        target_weekday = (end + timedelta(days=1)).weekday()
+
+        try:
+            from homeassistant.components.recorder import history as recorder_history
+
+            for entity_id in [entity for entity in entity_ids if entity]:
+                try:
+                    getter = partial(
+                        recorder_history.get_significant_states,
+                        self.hass,
+                        start,
+                        end,
+                        [entity_id],
+                        None,
+                        False,
+                        False,
+                        False,
+                        True,
+                    )
+                    states_by_entity = await self.hass.async_add_executor_job(getter)
+                except TypeError:
+                    getter = partial(
+                        recorder_history.get_significant_states,
+                        self.hass,
+                        start,
+                        end,
+                        [entity_id],
+                        None,
+                        False,
+                        False,
+                        False,
+                    )
+                    states_by_entity = await self.hass.async_add_executor_job(getter)
+                states = states_by_entity.get(entity_id, []) if states_by_entity else []
+                for item in states:
+                    state_value = getattr(item, "state", None)
+                    changed = getattr(item, "last_updated", None) or getattr(item, "last_changed", None)
+                    if state_value in [None, "unknown", "unavailable"] or changed is None:
+                        continue
+                    try:
+                        value = max(float(state_value), 0.0)
+                    except (TypeError, ValueError):
+                        continue
+                    idx = changed.hour * 4 + changed.minute // 15
+                    buckets_all[idx].append(value)
+                    if changed.weekday() == target_weekday:
+                        buckets_same_weekday[idx].append(value)
+                if any(buckets_same_weekday) or any(buckets_all):
+                    break
+        except Exception:
+            _LOGGER.debug("Recorder history niet beschikbaar voor plannerprofiel", exc_info=True)
+
+        profile = []
+        quality = "fallback huidig verbruik"
+        for idx in range(96):
+            values = buckets_same_weekday[idx] or buckets_all[idx]
+            if values:
+                profile.append(sum(values) / len(values))
+                quality = "history"
+            else:
+                profile.append(fallback)
+        return profile, quality
+
+    async def _refresh_smart_plan(self, force=False):
+        now = datetime.now().astimezone()
+        if (
+            not force
+            and self._last_plan_refresh is not None
+            and (now - self._last_plan_refresh) < timedelta(minutes=15)
+        ):
+            return
+
+        load_profile, profile_quality = await self._get_load_profile()
+        soc = {
+            "1": self._get_float_state(self.config.get(CONF_BATTERY_1_SOC)),
+            "2": self._get_float_state(self.config.get(CONF_BATTERY_2_SOC)),
+        }
+        inputs = PlannerInputs(
+            now=now,
+            current_soc_pct=self._get_average_soc(soc),
+            battery_nominal_kwh_each=self.planner_battery_nominal_kwh_each,
+            battery_count=int(self.planner_battery_count),
+            min_reserve_soc_pct=self.planner_min_reserve_soc,
+            safety_margin_pct=self.planner_safety_margin_pct,
+            import_limit_w=self.planner_import_limit_w,
+            max_grid_charge_power_w=self.grid_charge_max_power_w,
+            forecast_remaining_today_kwh=self._get_float_state(self.config.get(CONF_FORECAST_SOLAR_REMAINING_TODAY)),
+            forecast_tomorrow_kwh=self._get_float_state(self.config.get(CONF_FORECAST_SOLAR_TOMORROW)),
+            forecast_peak_today=self._get_datetime_state(self.config.get(CONF_FORECAST_SOLAR_PEAK_TODAY)),
+            forecast_peak_tomorrow=self._get_datetime_state(self.config.get(CONF_FORECAST_SOLAR_PEAK_TOMORROW)),
+            load_profile_w=load_profile,
+        )
+        self.smart_plan = build_plan(inputs)
+        self.smart_plan["profile_quality"] = profile_quality
+        self.smart_plan["generated_at"] = now.isoformat()
+        self._last_plan_refresh = now
+        async_dispatcher_send(self.hass, _SMART_PLAN_DISPATCH)
+
+    async def _send_plan_notification_if_needed(self):
+        now = datetime.now().astimezone()
+        if now.hour != 21 or self._last_plan_notification_date == now.date():
+            return
+
+        await self._refresh_smart_plan(force=True)
+        service_name = self.config.get(CONF_PLANNER_NOTIFY_SERVICE, DEFAULT_PLANNER_NOTIFY_SERVICE)
+        if "." not in service_name:
+            return
+        domain, service = service_name.split(".", 1)
+        dashboard_path = self.config.get(CONF_PLANNER_DASHBOARD_PATH, DEFAULT_PLANNER_DASHBOARD_PATH)
+        message = (
+            f"{self.smart_plan['summary']} "
+            f"Ochtend {self.smart_plan['target_soc_morning']:.0f}%, "
+            f"avond {self.smart_plan['target_soc_evening']:.0f}%, "
+            f"superdal {self.smart_plan['grid_charge_needed_kwh']:.2f} kWh."
+        )
+        await self.hass.services.async_call(
+            domain,
+            service,
+            {
+                "title": "HEMS Smart planning",
+                "message": message,
+                "data": {
+                    "url": dashboard_path,
+                    "clickAction": dashboard_path,
+                    "tag": "hems_smart_plan",
+                    "group": "hems",
+                },
+            },
+            blocking=False,
+        )
+        self._last_plan_notification_date = now.date()
+
+    async def _apply_control_cycle(
+        self,
+        control_power,
+        huisverbruik,
+        regel_huisverbruik,
+        grid_charge_request,
+        soc,
+        min_discharge_soc,
+        charge_target_soc,
+    ):
+        self._filtered_huisverbruik = (
+            (1.0 - self.filter_alpha) * self._filtered_huisverbruik
+            + self.filter_alpha * control_power
+        )
+
+        filtered_abs = abs(self._filtered_huisverbruik)
+        stop_threshold = self.deadband
+        start_threshold = self.deadband + self.deadband_release_margin
+
+        if self._global_mode == _FORCE_MODE_STOP:
+            if filtered_abs <= start_threshold:
+                global_mode = _FORCE_MODE_STOP
+            elif self._filtered_huisverbruik > 0:
+                global_mode = _FORCE_MODE_DISCHARGE
+            else:
+                global_mode = _FORCE_MODE_CHARGE
+        else:
+            if filtered_abs <= stop_threshold:
+                global_mode = _FORCE_MODE_STOP
+            elif self._filtered_huisverbruik > 0:
+                global_mode = _FORCE_MODE_DISCHARGE
+            else:
+                global_mode = _FORCE_MODE_CHARGE
+
+        now_monotonic = time.monotonic()
+        if (
+            global_mode != self._global_mode
+            and (now_monotonic - self._last_global_mode_change) < self.min_mode_hold_seconds
+        ):
+            global_mode = self._global_mode
+
+        if global_mode != self._global_mode:
+            self._global_mode = global_mode
+            self._last_global_mode_change = now_monotonic
+
+        if global_mode == _FORCE_MODE_DISCHARGE:
+            available = [idx for idx in ["1", "2"] if soc[idx] > min_discharge_soc]
+        elif global_mode == _FORCE_MODE_CHARGE:
+            available = [idx for idx in ["1", "2"] if soc[idx] < charge_target_soc]
+        else:
+            available = []
+
+        if available:
+            target_power_per_bat = min(
+                abs(self._filtered_huisverbruik) / len(available),
+                self.max_power_per_bat,
+            )
+            if 0.0 < target_power_per_bat < self.min_power_per_bat:
+                target_power_per_bat = self.min_power_per_bat
+        else:
+            target_power_per_bat = 0.0
+
+        for bat_idx in ["1", "2"]:
+            if bat_idx in available:
+                mode = global_mode
+                prev_abs = self.last_power[bat_idx] if self.last_mode[bat_idx] == mode else 0.0
+                delta = target_power_per_bat - prev_abs
+                if abs(delta) > self.max_power_step_per_cycle:
+                    abs_gewenst = prev_abs + (self.max_power_step_per_cycle if delta > 0 else -self.max_power_step_per_cycle)
+                else:
+                    abs_gewenst = target_power_per_bat
+                v_val = abs_gewenst if mode == _FORCE_MODE_DISCHARGE else -abs_gewenst
+            else:
+                mode = _FORCE_MODE_STOP
+                prev_abs = self.last_power[bat_idx] if self.last_mode[bat_idx] == _FORCE_MODE_STOP else 0.0
+                delta = -prev_abs
+                if abs(delta) > self.max_power_step_per_cycle:
+                    abs_gewenst = prev_abs - self.max_power_step_per_cycle
+                else:
+                    abs_gewenst = 0.0
+                v_val = 0.0
+
+            if self.last_mode[bat_idx] != mode or abs(self.last_power[bat_idx] - abs_gewenst) >= self.cache_threshold:
+                await self._apply_battery_command(bat_idx, mode, abs_gewenst)
+                self.virtual_bat_power[bat_idx] = v_val
+                self.last_mode[bat_idx] = mode
+                self.last_power[bat_idx] = abs_gewenst
+
+                _LOGGER.info(
+                    "[CTRL-NEXT] Bat %s update: bedrijfsmodus=%s regeling=%s huis=%.0fW regel=%.0fW netladen=%.0fW filtered=%.0fW SoC=%.1f%% actie=%s %.0fW",
+                    bat_idx,
+                    self.operating_mode,
+                    self.control_mode,
+                    huisverbruik,
+                    regel_huisverbruik,
+                    grid_charge_request,
+                    self._filtered_huisverbruik,
+                    soc[bat_idx],
+                    mode,
+                    abs_gewenst,
+                )
+
+        async_dispatcher_send(self.hass, "ctrl_next_update")
+
+    async def _collect_power_state(self):
+        p1_actual = await self._get_p1_actual_power()
+        bat1_ac = self._get_float_state(self.config.get(CONF_BAT1_AC_POWER))
+        bat2_ac = self._get_float_state(self.config.get(CONF_BAT2_AC_POWER))
+        huisverbruik = p1_actual + bat1_ac + bat2_ac
+        self.huisverbruik_value = huisverbruik
+        soc = {
+            "1": self._get_float_state(self.config.get(CONF_BATTERY_1_SOC)),
+            "2": self._get_float_state(self.config.get(CONF_BATTERY_2_SOC)),
+        }
+        return p1_actual, huisverbruik, soc
+
+    async def _run_manual_cycle(self):
+        _, huisverbruik, soc = await self._collect_power_state()
+        regel_huisverbruik = self._get_regel_huisverbruik(huisverbruik)
+        grid_charge_request = self._get_grid_charge_request(huisverbruik, soc)
+        control_power = regel_huisverbruik - grid_charge_request
+        charge_target = self._get_grid_charge_target_soc() if self.grid_charge_enabled else _SOC_MAX_CHARGE
+        await self._apply_control_cycle(
+            control_power,
+            huisverbruik,
+            regel_huisverbruik,
+            grid_charge_request,
+            soc,
+            _SOC_MIN_DISCHARGE,
+            charge_target,
+        )
+
+    def _smart_min_discharge_soc(self):
+        now = datetime.now().astimezone()
+        period = period_for_timestamp(now)
+        if period in ("morning_peak", "evening_peak"):
+            return self.planner_min_reserve_soc
+        if now.time() < SUPER_DAL_END:
+            return max(self.planner_min_reserve_soc, self.smart_plan.get("target_soc_after_super_dal", 0))
+        if now.time() < MORNING_PEAK_START:
+            return max(self.planner_min_reserve_soc, self.smart_plan.get("target_soc_morning", 0))
+        if now.time() < EVENING_PEAK_START:
+            return max(self.planner_min_reserve_soc, self.smart_plan.get("target_soc_evening", 0))
+        if now.time() >= EVENING_PEAK_END:
+            return max(self.planner_min_reserve_soc, self.smart_plan.get("target_soc_morning", 0))
+        return self.planner_min_reserve_soc
+
+    async def _run_smart_cycle(self):
+        await self._refresh_smart_plan(force=False)
+        await self._send_plan_notification_if_needed()
+        _, huisverbruik, soc = await self._collect_power_state()
+
+        now = datetime.now().astimezone()
+        period = period_for_timestamp(now)
+        avg_soc = self._get_average_soc(soc)
+        min_discharge_soc = self._smart_min_discharge_soc()
+        import_limit_w = max(self.planner_import_limit_w, 0.0)
+        control_power = 0.0
+        grid_charge_request = 0.0
+        regel_huisverbruik = 0.0
+
+        if huisverbruik < 0:
+            control_power = huisverbruik
+            regel_huisverbruik = huisverbruik
+        elif period == "super_dal":
+            if huisverbruik > import_limit_w:
+                control_power = huisverbruik - import_limit_w
+                regel_huisverbruik = control_power
+            elif avg_soc < self.smart_plan.get("target_soc_after_super_dal", 0):
+                headroom = max(import_limit_w - max(huisverbruik, 0.0), 0.0)
+                grid_charge_request = min(self.grid_charge_max_power_w, headroom)
+                control_power = -grid_charge_request
+                regel_huisverbruik = 0.0
+            elif avg_soc > min_discharge_soc + 1 and huisverbruik > 0:
+                control_power = huisverbruik
+                regel_huisverbruik = huisverbruik
+        elif period in ("morning_peak", "evening_peak"):
+            control_power = huisverbruik
+            regel_huisverbruik = huisverbruik
+        else:
+            if huisverbruik > import_limit_w:
+                control_power = huisverbruik - import_limit_w
+                regel_huisverbruik = control_power
+            elif avg_soc > min_discharge_soc + 1 and huisverbruik > 0:
+                control_power = huisverbruik
+                regel_huisverbruik = huisverbruik
+
+        charge_target_soc = _SOC_MAX_CHARGE
+        if period == "super_dal" and grid_charge_request > 0:
+            charge_target_soc = self.smart_plan.get("target_soc_after_super_dal", _SOC_MAX_CHARGE)
+
+        await self._apply_control_cycle(
+            control_power,
+            huisverbruik,
+            regel_huisverbruik,
+            grid_charge_request,
+            soc,
+            min_discharge_soc,
+            charge_target_soc,
+        )
+
     async def _loop(self):
         while self.running:
-            if self.enabled:
-                try:
-                    p1_actual = await self._get_p1_actual_power()
-                    bat1_ac = self._get_float_state(self.config.get("bat1_ac_power"))
-                    bat2_ac = self._get_float_state(self.config.get("bat2_ac_power"))
-                    
-                    huisverbruik = p1_actual + bat1_ac + bat2_ac
-                    self.huisverbruik_value = huisverbruik
-                    regel_huisverbruik = self._get_regel_huisverbruik(huisverbruik)
+            try:
+                await self._refresh_smart_plan(force=False)
+                await self._send_plan_notification_if_needed()
 
-                    soc = {
-                        "1": self._get_float_state(self.config.get(CONF_BATTERY_1_SOC)),
-                        "2": self._get_float_state(self.config.get(CONF_BATTERY_2_SOC)),
-                    }
-                    grid_charge_request = self._get_grid_charge_request(huisverbruik, soc)
-                    control_power = regel_huisverbruik - grid_charge_request
+                if self.operating_mode == OPERATING_MODE_OFF:
+                    await asyncio.sleep(1)
+                    continue
+                if self.operating_mode == OPERATING_MODE_SMART:
+                    await self._run_smart_cycle()
+                else:
+                    await self._run_manual_cycle()
+            except Exception:
+                _LOGGER.exception("Fout in controller loop; failsafe wordt geactiveerd")
+                await self.set_operating_mode(OPERATING_MODE_OFF)
 
-                    # Low-pass filter dempt spikes in meting en maakt de regeling rustiger.
-                    self._filtered_huisverbruik = (
-                        (1.0 - self.filter_alpha) * self._filtered_huisverbruik
-                        + self.filter_alpha * control_power
-                    )
-
-                    # Hysterese voorkomt flippen rond 0W; hold voorkomt snelle modewissels.
-                    filtered_abs = abs(self._filtered_huisverbruik)
-                    stop_threshold = self.deadband
-                    start_threshold = self.deadband + self.deadband_release_margin
-
-                    if self._global_mode == _FORCE_MODE_STOP:
-                        if filtered_abs <= start_threshold:
-                            global_mode = _FORCE_MODE_STOP
-                        elif self._filtered_huisverbruik > 0:
-                            global_mode = _FORCE_MODE_DISCHARGE
-                        else:
-                            global_mode = _FORCE_MODE_CHARGE
-                    else:
-                        if filtered_abs <= stop_threshold:
-                            global_mode = _FORCE_MODE_STOP
-                        elif self._filtered_huisverbruik > 0:
-                            global_mode = _FORCE_MODE_DISCHARGE
-                        else:
-                            global_mode = _FORCE_MODE_CHARGE
-
-                    now = time.monotonic()
-                    if (
-                        global_mode != self._global_mode
-                        and (now - self._last_global_mode_change) < self.min_mode_hold_seconds
-                    ):
-                        global_mode = self._global_mode
-
-                    if global_mode != self._global_mode:
-                        self._global_mode = global_mode
-                        self._last_global_mode_change = now
-
-                    # Bepaal welke batterijen beschikbaar zijn voor de gewenste mode
-                    if global_mode == _FORCE_MODE_DISCHARGE:
-                        available = [idx for idx in ["1", "2"] if soc[idx] > _SOC_MIN_DISCHARGE]
-                    elif global_mode == _FORCE_MODE_CHARGE:
-                        target_soc = self._get_grid_charge_target_soc()
-                        if self.grid_charge_enabled:
-                            available = [idx for idx in ["1", "2"] if soc[idx] < target_soc]
-                        else:
-                            available = [idx for idx in ["1", "2"] if soc[idx] < _SOC_MAX_CHARGE]
-                    else:
-                        available = []
-
-                    # Verdeel het totale gevraagde vermogen over de beschikbare batterijen
-                    if available:
-                        target_power_per_bat = min(
-                            abs(self._filtered_huisverbruik) / len(available),
-                            self.max_power_per_bat,
-                        )
-                        if 0.0 < target_power_per_bat < self.min_power_per_bat:
-                            target_power_per_bat = self.min_power_per_bat
-                    else:
-                        target_power_per_bat = 0.0
-
-                    for bat_idx in ["1", "2"]:
-                        if bat_idx in available:
-                            mode = global_mode
-                            prev_abs = self.last_power[bat_idx] if self.last_mode[bat_idx] == mode else 0.0
-                            delta = target_power_per_bat - prev_abs
-                            if abs(delta) > self.max_power_step_per_cycle:
-                                abs_gewenst = prev_abs + (self.max_power_step_per_cycle if delta > 0 else -self.max_power_step_per_cycle)
-                            else:
-                                abs_gewenst = target_power_per_bat
-                            v_val = abs_gewenst if mode == _FORCE_MODE_DISCHARGE else -abs_gewenst
-                        else:
-                            mode = _FORCE_MODE_STOP
-                            prev_abs = self.last_power[bat_idx] if self.last_mode[bat_idx] == _FORCE_MODE_STOP else 0.0
-                            delta = -prev_abs
-                            if abs(delta) > self.max_power_step_per_cycle:
-                                abs_gewenst = prev_abs - self.max_power_step_per_cycle
-                            else:
-                                abs_gewenst = 0.0
-                            v_val = 0.0
-
-                        if self.last_mode[bat_idx] != mode or abs(self.last_power[bat_idx] - abs_gewenst) >= self.cache_threshold:
-                            await self._apply_battery_command(bat_idx, mode, abs_gewenst)
-                            self.virtual_bat_power[bat_idx] = v_val
-                            self.last_mode[bat_idx] = mode
-                            self.last_power[bat_idx] = abs_gewenst
-
-                            _LOGGER.info(
-                                "[CTRL-NEXT] Bat %s update: Huisverbruik=%.0fW (regel=%.0fW, netladen=%.0fW, filtered=%.0fW) SoC=%.1f%% | Actie: %s met %.0fW",
-                                bat_idx,
-                                huisverbruik,
-                                regel_huisverbruik,
-                                grid_charge_request,
-                                self._filtered_huisverbruik,
-                                soc[bat_idx],
-                                mode,
-                                abs_gewenst,
-                            )
-
-                    # Stuur een signaal naar de sensoren om te verversen in de UI
-                    async_dispatcher_send(self.hass, "ctrl_next_update")
-                    
-                except Exception:
-                    _LOGGER.exception("Fout in controller loop; failsafe wordt geactiveerd")
-                    self.enabled = False
-                    await self._set_all_batteries_failsafe("controller fout")
-            
             await asyncio.sleep(1)

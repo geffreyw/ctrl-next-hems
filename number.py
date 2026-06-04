@@ -1,5 +1,9 @@
 from homeassistant.components.number import RestoreNumber
+from homeassistant.helpers.dispatcher import async_dispatcher_send
+
 from .const import DOMAIN
+
+_SMART_PLAN_UPDATE = "ctrl_next_plan_update"
 
 
 async def async_setup_entry(hass, entry, async_add_entities):
@@ -95,6 +99,51 @@ async def async_setup_entry(hass, entry, async_add_entities):
             "icon": "mdi:timer-sand",
             "unit": "s",
         },
+        {
+            "name": "Planner Batterijcapaciteit Per Batterij (kWh)",
+            "param": "planner_battery_nominal_kwh_each",
+            "min": 1,
+            "max": 30,
+            "step": 0.01,
+            "icon": "mdi:battery",
+            "unit": "kWh",
+        },
+        {
+            "name": "Planner Aantal Batterijen",
+            "param": "planner_battery_count",
+            "min": 1,
+            "max": 8,
+            "step": 1,
+            "icon": "mdi:battery-sync",
+            "unit": None,
+        },
+        {
+            "name": "Planner Minimale Reserve SoC (%)",
+            "param": "planner_min_reserve_soc",
+            "min": 0,
+            "max": 60,
+            "step": 1,
+            "icon": "mdi:battery-lock",
+            "unit": "%",
+        },
+        {
+            "name": "Planner Veiligheidsmarge (%)",
+            "param": "planner_safety_margin_pct",
+            "min": 0,
+            "max": 50,
+            "step": 1,
+            "icon": "mdi:shield-half-full",
+            "unit": "%",
+        },
+        {
+            "name": "Planner Import Limiet (W)",
+            "param": "planner_import_limit_w",
+            "min": 500,
+            "max": 10000,
+            "step": 50,
+            "icon": "mdi:transmission-tower",
+            "unit": "W",
+        },
     ]
 
     async_add_entities([
@@ -141,6 +190,8 @@ class HemsParamSlider(RestoreNumber):
             val = float(last_number_data.native_value)
             setattr(self._controller, self._param_name, val)
             self._attr_native_value = val
+            if self._param_name.startswith("planner_") or self._param_name == "grid_charge_max_power_w":
+                self._controller.invalidate_smart_plan()
 
     @property
     def native_value(self):
@@ -150,4 +201,7 @@ class HemsParamSlider(RestoreNumber):
         val = float(value)
         setattr(self._controller, self._param_name, val)
         self._attr_native_value = val
+        if self._param_name.startswith("planner_") or self._param_name == "grid_charge_max_power_w":
+            self._controller.invalidate_smart_plan()
+            async_dispatcher_send(self.hass, _SMART_PLAN_UPDATE)
         self.async_write_ha_state()

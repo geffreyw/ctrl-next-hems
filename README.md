@@ -44,17 +44,36 @@ Na installatie maakt de integratie entiteiten aan onder één apparaat (`CTRL-NE
 	- Deze tonen het aangestuurde batterijvermogen vanuit de controller (niet het gemeten AC-vermogen).
 	- Positief betekent ontlaad-commando, negatief betekent laad-commando, nul betekent stop.
 
+- HEMS Plan Summary
+  - Samenvatting van het Smart-plan dat om 21:00 ook als melding wordt verstuurd.
+  - Attributen bevatten de kwartierverwachting voor SoC, verwacht verbruik, verwachte solar en verwachte import.
+
+- HEMS Plan Doel SoC Ochtendpiek
+- HEMS Plan Doel SoC Avondpiek
+- HEMS Plan Superdal Laden Nodig
+- HEMS Plan Verwachte Minimum SoC
+- HEMS Plan Batterijoverschot Vrij
+  - Kernwaarden van de Smart-planner voor het dashboard.
+
+- HEMS Gemiddelde Batterij SoC
+- HEMS Batterij Totaal Nominaal
+- HEMS Batterij Bruikbaar Boven Reserve
+  - Batterijcontext voor de planner. Standaard is dit 2 x 5,12 kWh met 15% reserve, dus 8,70 kWh bruikbaar boven reserve.
+
 ### Switch
 
-- CTRL-NEXT HEMS Actief
-	- Zet de controller-lus aan of uit.
-
 - HEMS Netladen Toestaan
+  - Alleen bedoeld voor Manual-modus.
   - Laat de controller extra laadvraag vanaf het net toevoegen zolang de actieve regeling dat toelaat.
   - In `anti_feed` is de importlimiet 0 W, dus deze functie voegt daar geen extra netladen toe.
   - In `peak_shaving` gebruikt de controller vrije ruimte onder de Peak Shaving Limiet om de batterijen bij te laden.
 
 ### Select
+
+- HEMS Bedrijfsmodus
+  - `off`: HEMS-sturing uit. Batterijen worden naar force mode `stop` gezet en Marstek work mode gaat terug naar `anti_feed`.
+  - `manual`: behoudt de bestaande HEMS-regeling op basis van `HEMS Regeling Modus`.
+  - `smart`: gebruikt de planner om piekuren op 0 W import te richten, superdal-laden alleen te doen wanneer nodig en import algemeen onder 2200 W te houden.
 
 - HEMS Regeling Modus
 	- `anti_feed`: compenseert import/export rond 0 W op basis van het gemeten huisverbruik.
@@ -65,6 +84,10 @@ Na installatie maakt de integratie entiteiten aan onder één apparaat (`CTRL-NE
 Na het toevoegen van de integratie maakt Home Assistant meerdere number- en select-entiteiten aan op het CTRL-NEXT HEMS apparaat. Hiermee kun je gedrag tunen zonder code aan te passen.
 
 ### Select-entiteit
+
+- HEMS Bedrijfsmodus
+  - Hoofdkeuze tussen `off`, `manual` en `smart`.
+  - Alleen `smart` voert planner-gestuurde acties uit.
 
 - HEMS Regeling Modus
   - `anti_feed`: compenseert import/export rond 0 W op basis van gemeten huisverbruik.
@@ -112,10 +135,19 @@ Na het toevoegen van de integratie maakt Home Assistant meerdere number- en sele
   - Wat dit instelt: Minimale setpoint-delta die nodig is voordat een nieuwe Modbus-waarde wordt geschreven.
   - Gedragseffect: Hogere waarden verlagen schrijffrequentie en busbelasting. Lagere waarden updaten vaker en volgen het doelvermogen strakker.
 
+- HEMS Planner Batterijcapaciteit Per Batterij (kWh)
+- HEMS Planner Aantal Batterijen
+- HEMS Planner Minimale Reserve SoC (%)
+- HEMS Planner Veiligheidsmarge (%)
+- HEMS Planner Import Limiet (W)
+  - Smart-plannerinstellingen. Defaults: 5,12 kWh per batterij, 2 batterijen, 15% reserve, 15% veiligheidsmarge en 2200 W importlimiet.
+
 ## Tuning-richtlijnen
 
 - Start conservatief: verhoog eerst stabiliteit en daarna pas responsiviteit.
-- Wil je 's nachts goedkoop laden: zet `HEMS Netladen Toestaan` aan via een automation, kies een `HEMS Netlaad Doel SoC (%)`, en beperk het tempo met `HEMS Max Netlaad Vermogen (W)`.
+- Wil je de nieuwe voorspelling gebruiken: kies `smart` bij `HEMS Bedrijfsmodus`.
+- Wil je de oude werking behouden: kies `manual` en gebruik `HEMS Regeling Modus` zoals vroeger.
+- Wil je 's nachts goedkoop laden in Manual: zet `HEMS Netladen Toestaan` aan via een automation, kies een `HEMS Netlaad Doel SoC (%)`, en beperk het tempo met `HEMS Max Netlaad Vermogen (W)`.
 - In `anti_feed` zal netladen geen extra import veroorzaken, omdat de importlimiet daar 0 W blijft.
 - In `peak_shaving` laadt de controller alleen bij zolang er nog ruimte is onder de ingestelde Peak Shaving Limiet.
 - Zie je frequente modewissels: verhoog Deadband, Deadband Release Margin en/of Minimale Mode Hold Tijd.
