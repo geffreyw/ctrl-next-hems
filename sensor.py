@@ -33,6 +33,12 @@ async def async_setup_entry(hass, entry, async_add_entities):
         PlanMetricSensor(controller, "HEMS Plan Dag Solar Laadpotentieel", "day_charge_potential_kwh", UnitOfEnergy.KILO_WATT_HOUR, "mdi:solar-power-variant", SensorDeviceClass.ENERGY),
         PlanTextSensor(controller, "HEMS Plan Profielkwaliteit", "profile_quality", "mdi:database-clock-outline"),
         PlanTextSensor(controller, "HEMS Plan Laatste Berekening", "generated_at", "mdi:clock-check-outline"),
+        ActiveProfileTextSensor(controller, "HEMS Smart Scenario Actief", "scenario", "mdi:calendar-clock"),
+        ActiveProfileTextSensor(controller, "HEMS Smart Control Mode Actief", "control_mode", "mdi:transmission-tower-export"),
+        ActiveProfileMetricSensor(controller, "HEMS Smart Geplande Importlimiet", "peak_shaving_limit_w", UnitOfPower.WATT, "mdi:gauge", SensorDeviceClass.POWER),
+        ActiveProfileMetricSensor(controller, "HEMS Smart Gepland Target SoC", "grid_charge_target_soc", PERCENTAGE, "mdi:battery-charging-80", SensorDeviceClass.BATTERY),
+        ActiveProfileMetricSensor(controller, "HEMS Smart Gepland Max Netlaadvermogen", "grid_charge_max_power_w", UnitOfPower.WATT, "mdi:ev-station", SensorDeviceClass.POWER),
+        ActiveProfileMetricSensor(controller, "HEMS Smart Minimum Ontlaad SoC", "min_discharge_soc", PERCENTAGE, "mdi:battery-lock", SensorDeviceClass.BATTERY),
     ])
 
 
@@ -299,6 +305,13 @@ class PlanSummarySensor(_CtrlNextSensorBase, SensorEntity):
             "expected_import_w": plan.get("expected_import_w", []),
             "period": plan.get("mode", []),
             "reasons": plan.get("reasons", []),
+            "control_mode": plan.get("control_mode", []),
+            "peak_shaving_limit_w": plan.get("peak_shaving_limit_w", []),
+            "grid_charge_enabled": plan.get("grid_charge_enabled", []),
+            "grid_charge_target_soc": plan.get("grid_charge_target_soc", []),
+            "grid_charge_max_power_w": plan.get("grid_charge_max_power_w", []),
+            "min_discharge_soc": plan.get("min_discharge_soc", []),
+            "scenario": plan.get("scenario", []),
         }
 
 
@@ -347,3 +360,58 @@ class PlanTextSensor(_CtrlNextSensorBase, SensorEntity):
     @property
     def native_value(self):
         return self._controller.smart_plan.get(self._key)
+
+
+class ActiveProfileTextSensor(_CtrlNextSensorBase, SensorEntity):
+    def __init__(self, controller, name, key, icon):
+        self._controller = controller
+        self._key = key
+        self._attr_name = name
+        self._attr_unique_id = f"{controller.config.get('p1_sensor')}_active_{key}"
+        self._attr_icon = icon
+
+    @property
+    def device_info(self):
+        return self._device_info()
+
+    async def async_added_to_hass(self):
+        self.async_on_remove(
+            async_dispatcher_connect(self.hass, _SMART_PLAN_UPDATE, self.async_write_ha_state)
+        )
+
+    @property
+    def native_value(self):
+        return self._controller.smart_active_profile.get(self._key)
+
+    @property
+    def extra_state_attributes(self):
+        return {
+            "timestamp": self._controller.smart_active_profile.get("timestamp"),
+            "period": self._controller.smart_active_profile.get("period"),
+            "grid_charge_enabled": self._controller.smart_active_profile.get("grid_charge_enabled"),
+        }
+
+
+class ActiveProfileMetricSensor(_CtrlNextSensorBase, SensorEntity):
+    def __init__(self, controller, name, key, unit, icon, device_class):
+        self._controller = controller
+        self._key = key
+        self._attr_name = name
+        self._attr_unique_id = f"{controller.config.get('p1_sensor')}_active_{key}"
+        self._attr_native_unit_of_measurement = unit
+        self._attr_icon = icon
+        self._attr_device_class = device_class
+        self._attr_state_class = SensorStateClass.MEASUREMENT
+
+    @property
+    def device_info(self):
+        return self._device_info()
+
+    async def async_added_to_hass(self):
+        self.async_on_remove(
+            async_dispatcher_connect(self.hass, _SMART_PLAN_UPDATE, self.async_write_ha_state)
+        )
+
+    @property
+    def native_value(self):
+        return self._controller.smart_active_profile.get(self._key)

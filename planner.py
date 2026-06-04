@@ -12,6 +12,15 @@ MORNING_PEAK_END = time(11, 0)
 EVENING_PEAK_START = time(17, 0)
 EVENING_PEAK_END = time(23, 0)
 
+CONTROL_MODE_ANTI_FEED = "anti_feed"
+CONTROL_MODE_PEAK_SHAVING = "peak_shaving"
+SCENARIO_PEAK_ZERO_IMPORT = "peak_zero_import"
+SCENARIO_SUPERDAL_CHARGE = "superdal_charge"
+SCENARIO_LIMIT_IMPORT = "limit_import"
+SCENARIO_USE_SURPLUS = "use_surplus"
+SCENARIO_HOLD_RESERVE = "hold_reserve"
+SCENARIO_SOLAR_SURPLUS = "solar_surplus"
+
 
 @dataclass
 class PlannerInputs:
@@ -156,12 +165,20 @@ def build_plan(inputs: PlannerInputs) -> dict:
     evening_deficit_kwh = max(evening_need_kwh - day_charge_potential_kwh, 0.0)
     target_after_super_dal_kwh = min(total_capacity_kwh, reserve_kwh + morning_need_kwh + evening_deficit_kwh)
     grid_charge_needed_kwh = max(target_after_super_dal_kwh - current_energy_kwh, 0.0)
+    target_after_super_dal_soc = target_after_super_dal_kwh / total_capacity_kwh * 100.0
 
     energy_kwh = current_energy_kwh
     expected_soc = []
     expected_import_w = []
     mode = []
     reason = []
+    control_mode = []
+    peak_shaving_limit_w = []
+    grid_charge_enabled = []
+    grid_charge_target_soc = []
+    grid_charge_max_power_w = []
+    min_discharge_soc = []
+    scenario = []
     super_dal_remaining_kwh = grid_charge_needed_kwh
 
     for idx, ts in enumerate(timestamps):
@@ -170,32 +187,72 @@ def build_plan(inputs: PlannerInputs) -> dict:
         solar = solar_w[idx]
         net_load = load - solar
         slot_reason = "balans"
+        slot_control_mode = CONTROL_MODE_PEAK_SHAVING
+        slot_peak_limit_w = inputs.import_limit_w
+        slot_grid_charge = False
+        slot_grid_target_soc = 0.0
+        slot_grid_max_power_w = 0.0
+        slot_scenario = SCENARIO_HOLD_RESERVE
+
+        if period in ("morning_peak", "evening_peak"):
+            protected_kwh = reserve_kwh
+            target_import_w = 0.0
+            slot_control_mode = CONTROL_MODE_ANTI_FEED
+            slot_peak_limit_w = 0.0
+            slot_scenario = SCENARIO_PEAK_ZERO_IMPORT
+            slot_reason = "piek naar 0W import"
+        elif period == "super_dal" and super_dal_remaining_kwh > 0:
+            protected_kwh = target_after_super_dal_kwh
+            target_import_w = inputs.import_limit_w
+            headroom_w = max(inputs.import_limit_w - load, 0.0)
+            slot_grid_max_power_w = min(
+                inputs.max_grid_charge_power_w,
+                headroom_w,
+                super_dal_remaining_kwh * 1000.0 / 0.25,
+            )
+            slot_grid_charge = slot_grid_max_power_w > 0.0
+            slot_grid_target_soc = target_after_super_dal_soc
+            slot_scenario = SCENARIO_SUPERDAL_CHARGE if slot_grid_charge else SCENARIO_HOLD_RESERVE
+            slot_reason = "superdal laden binnen importlimiet"
+        else:
+            if ts.time() < SUPER_DAL_END:
+                protected_kwh = target_after_super_dal_kwh
+            elif ts.time() < MORNING_PEAK_START:
+                protected_kwh = target_morning_kwh
+            elif ts.time() < EVENING_PEAK_START:
+                protected_kwh = target_evening_kwh
+            elif ts.time() >= EVENING_PEAK_END:
+                protected_kwh = target_morning_kwh
+            else:
+                protected_kwh = reserve_kwh
+
+            surplus_kwh = max(energy_kwh - protected_kwh, 0.0)
+            if surplus_kwh > 0:
+                target_import_w = 0.0
+                slot_control_mode = CONTROL_MODE_ANTI_FEED
+                slot_peak_limit_w = 0.0
+                slot_scenario = SCENARIO_USE_SURPLUS
+                slot_reason = "overschot gebruiken"
+            else:
+                target_import_w = inputs.import_limit_w
+                slot_scenario = SCENARIO_LIMIT_IMPORT if net_load > inputs.import_limit_w else SCENARIO_HOLD_RESERVE
+                slot_reason = "import begrenzen" if net_load > inputs.import_limit_w else "reserve bewaren"
+
+        if net_load < 0:
+            slot_scenario = SCENARIO_SOLAR_SURPLUS
+            slot_reason = "solaroverschot laadt batterij"
 
         if net_load < 0:
             charge_kwh = min(-net_load * 0.25 / 1000.0, total_capacity_kwh - energy_kwh)
             energy_kwh += max(charge_kwh, 0.0)
             grid_import = 0.0
-            slot_reason = "solaroverschot laadt batterij"
-        elif period == "super_dal" and super_dal_remaining_kwh > 0:
-            headroom_w = max(inputs.import_limit_w - load, 0.0)
-            charge_w = min(inputs.max_grid_charge_power_w, headroom_w, super_dal_remaining_kwh * 1000.0 / 0.25)
+        elif slot_grid_charge:
+            charge_w = slot_grid_max_power_w
             charge_kwh = max(charge_w, 0.0) * 0.25 / 1000.0
             energy_kwh = min(total_capacity_kwh, energy_kwh + charge_kwh)
             super_dal_remaining_kwh = max(super_dal_remaining_kwh - charge_kwh, 0.0)
             grid_import = min(load + charge_w, inputs.import_limit_w)
-            slot_reason = "superdal laden binnen importlimiet"
         else:
-            if period in ("morning_peak", "evening_peak"):
-                protected_kwh = reserve_kwh
-                target_import_w = 0.0
-                slot_reason = "piek naar 0W import"
-            else:
-                next_peak_need = evening_need_kwh if ts.time() < EVENING_PEAK_START else morning_need_kwh
-                protected_kwh = min(total_capacity_kwh, reserve_kwh + next_peak_need)
-                surplus_kwh = max(energy_kwh - protected_kwh, 0.0)
-                target_import_w = 0.0 if surplus_kwh > 0 else inputs.import_limit_w
-                slot_reason = "overschot gebruiken" if surplus_kwh > 0 else "import begrenzen"
-
             desired_discharge_w = max(net_load - target_import_w, 0.0)
             available_discharge_kwh = max(energy_kwh - protected_kwh, 0.0)
             discharge_kwh = min(desired_discharge_w * 0.25 / 1000.0, available_discharge_kwh)
@@ -207,6 +264,13 @@ def build_plan(inputs: PlannerInputs) -> dict:
         expected_import_w.append(round(grid_import, 0))
         mode.append(period)
         reason.append(slot_reason)
+        control_mode.append(slot_control_mode)
+        peak_shaving_limit_w.append(round(slot_peak_limit_w, 0))
+        grid_charge_enabled.append(slot_grid_charge)
+        grid_charge_target_soc.append(round(slot_grid_target_soc, 0))
+        grid_charge_max_power_w.append(round(slot_grid_max_power_w, 0))
+        min_discharge_soc.append(round(protected_kwh / total_capacity_kwh * 100.0, 1))
+        scenario.append(slot_scenario)
 
     expected_min_soc = min(expected_soc) if expected_soc else inputs.current_soc_pct
     free_surplus_kwh = max(current_energy_kwh - target_after_super_dal_kwh, 0.0)
@@ -244,5 +308,12 @@ def build_plan(inputs: PlannerInputs) -> dict:
         "expected_import_w": expected_import_w,
         "mode": mode,
         "reasons": reason,
+        "control_mode": control_mode,
+        "peak_shaving_limit_w": peak_shaving_limit_w,
+        "grid_charge_enabled": grid_charge_enabled,
+        "grid_charge_target_soc": grid_charge_target_soc,
+        "grid_charge_max_power_w": grid_charge_max_power_w,
+        "min_discharge_soc": min_discharge_soc,
+        "scenario": scenario,
         "profile_quality": "history_or_fallback",
     }

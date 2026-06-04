@@ -1,4 +1,5 @@
 from homeassistant.components.switch import SwitchEntity
+from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.restore_state import RestoreEntity
 
 from .const import DOMAIN
@@ -29,6 +30,9 @@ class HemsGridChargeSwitch(RestoreEntity, SwitchEntity):
 
     async def async_added_to_hass(self):
         await super().async_added_to_hass()
+        self.async_on_remove(
+            async_dispatcher_connect(self.hass, "ctrl_next_update", self.async_write_ha_state)
+        )
         last_state = await self.async_get_last_state()
         if last_state:
             self._controller.set_grid_charge_enabled(last_state.state == "on")

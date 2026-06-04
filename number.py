@@ -190,6 +190,7 @@ class HemsParamSlider(RestoreNumber):
             val = float(last_number_data.native_value)
             setattr(self._controller, self._param_name, val)
             self._attr_native_value = val
+            self._controller.remember_manual_control_settings_if_allowed()
             if self._param_name.startswith("planner_") or self._param_name == "grid_charge_max_power_w":
                 self._controller.invalidate_smart_plan()
 
@@ -201,6 +202,7 @@ class HemsParamSlider(RestoreNumber):
         val = float(value)
         setattr(self._controller, self._param_name, val)
         self._attr_native_value = val
+        self._controller.remember_manual_control_settings_if_allowed()
         if self._param_name.startswith("planner_") or self._param_name == "grid_charge_max_power_w":
             self._controller.invalidate_smart_plan()
             async_dispatcher_send(self.hass, _SMART_PLAN_UPDATE)

@@ -46,7 +46,7 @@ Na installatie maakt de integratie entiteiten aan onder één apparaat (`CTRL-NE
 
 - HEMS Plan Summary
   - Samenvatting van het Smart-plan dat om 21:00 ook als melding wordt verstuurd.
-  - Attributen bevatten de kwartierverwachting voor SoC, verwacht verbruik, verwachte solar en verwachte import.
+  - Attributen bevatten de kwartierverwachting voor SoC, verwacht verbruik, verwachte solar, verwachte import en geplande HEMS control mode.
 
 - HEMS Plan Doel SoC Ochtendpiek
 - HEMS Plan Doel SoC Avondpiek
@@ -54,6 +54,10 @@ Na installatie maakt de integratie entiteiten aan onder één apparaat (`CTRL-NE
 - HEMS Plan Verwachte Minimum SoC
 - HEMS Plan Batterijoverschot Vrij
   - Kernwaarden van de Smart-planner voor het dashboard.
+
+- HEMS Smart Scenario Actief
+- HEMS Smart Control Mode Actief
+  - Tonen welk kwartier-scenario Smart nu uitvoert en welke bestaande HEMS-regeling daarvoor actief is.
 
 - HEMS Gemiddelde Batterij SoC
 - HEMS Batterij Totaal Nominaal
@@ -73,7 +77,7 @@ Na installatie maakt de integratie entiteiten aan onder één apparaat (`CTRL-NE
 - HEMS Bedrijfsmodus
   - `off`: HEMS-sturing uit. Batterijen worden naar force mode `stop` gezet en Marstek work mode gaat terug naar `anti_feed`.
   - `manual`: behoudt de bestaande HEMS-regeling op basis van `HEMS Regeling Modus`.
-  - `smart`: gebruikt de planner om piekuren op 0 W import te richten, superdal-laden alleen te doen wanneer nodig en import algemeen onder 2200 W te houden.
+  - `smart`: gebruikt de planner om de bestaande `anti_feed` en `peak_shaving` modes per kwartier zichtbaar te kiezen met geplande settings.
 
 - HEMS Regeling Modus
 	- `anti_feed`: compenseert import/export rond 0 W op basis van het gemeten huisverbruik.
@@ -92,6 +96,7 @@ Na het toevoegen van de integratie maakt Home Assistant meerdere number- en sele
 - HEMS Regeling Modus
   - `anti_feed`: compenseert import/export rond 0 W op basis van gemeten huisverbruik.
   - `peak_shaving`: ontlaadt alleen boven de ingestelde Peak Shaving Limiet en vermijdt ontladen bij normaal positief verbruik onder die limiet.
+  - In `smart` mag de planner deze selector automatisch overschrijven. Handmatige wijzigingen zijn dan tijdelijk; in `manual` blijft dit je vaste keuze.
 
 ### Number-entiteiten
 

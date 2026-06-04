@@ -184,6 +184,7 @@ class CtrlNextController:
                 CONTROL_MODE_ANTI_FEED,
             )
             self.control_mode = CONTROL_MODE_ANTI_FEED
+        self.manual_control_mode = self.control_mode
 
         self.max_power_per_bat = 2500.0
 
@@ -215,6 +216,9 @@ class CtrlNextController:
         self.last_mode = {"1": _FORCE_MODE_STOP, "2": _FORCE_MODE_STOP}
         self.last_power = {"1": 0.0, "2": 0.0}
         self.smart_plan = self._empty_plan()
+        self.smart_active_profile = self._empty_smart_profile()
+        self._manual_control_settings = {}
+        self._capture_manual_control_settings()
         self._last_plan_refresh = None
         self._last_plan_notification_date = None
 
@@ -247,6 +251,11 @@ class CtrlNextController:
         if mode == self.operating_mode:
             return
 
+        previous_mode = self.operating_mode
+        if previous_mode == OPERATING_MODE_MANUAL:
+            self.manual_control_mode = self.control_mode
+            self._capture_manual_control_settings()
+
         _LOGGER.info("Bedrijfsmodus gewijzigd van '%s' naar '%s'", self.operating_mode, mode)
         self.operating_mode = mode
         self.enabled = mode != OPERATING_MODE_OFF
@@ -254,6 +263,9 @@ class CtrlNextController:
         if mode == OPERATING_MODE_OFF:
             await self._set_all_batteries_failsafe("bedrijfsmodus off")
         else:
+            if mode == OPERATING_MODE_MANUAL:
+                self._restore_manual_control_settings()
+                self.set_control_mode(self.manual_control_mode, remember_manual=False)
             self.last_mode = {"1": "Unknown", "2": "Unknown"}
             self.last_power = {"1": -1.0, "2": -1.0}
             async_dispatcher_send(self.hass, "ctrl_next_update")
@@ -325,20 +337,49 @@ class CtrlNextController:
         # Als enkel host geconfigureerd stond, converteer naar hardcoded endpoint.
         return self._build_p1_data_url(legacy_url)
 
-    def set_control_mode(self, mode: str):
+    def _capture_manual_control_settings(self):
+        self._manual_control_settings = {
+            "peak_shaving_limit_w": self.peak_shaving_limit_w,
+            "grid_charge_enabled": self.grid_charge_enabled,
+            "grid_charge_target_soc": self.grid_charge_target_soc,
+            "grid_charge_max_power_w": self.grid_charge_max_power_w,
+        }
+
+    def _restore_manual_control_settings(self):
+        if not self._manual_control_settings:
+            return
+        self.peak_shaving_limit_w = self._manual_control_settings["peak_shaving_limit_w"]
+        self.grid_charge_enabled = self._manual_control_settings["grid_charge_enabled"]
+        self.grid_charge_target_soc = self._manual_control_settings["grid_charge_target_soc"]
+        self.grid_charge_max_power_w = self._manual_control_settings["grid_charge_max_power_w"]
+
+    def remember_manual_control_settings_if_allowed(self):
+        if self.operating_mode != OPERATING_MODE_SMART:
+            self._capture_manual_control_settings()
+
+    def set_control_mode(self, mode: str, remember_manual=None):
         if mode not in self.control_modes:
             _LOGGER.warning("Ongeldige control_mode ontvangen: %s", mode)
             return
 
+        if remember_manual is None:
+            remember_manual = self.operating_mode != OPERATING_MODE_SMART
+        if remember_manual:
+            self.manual_control_mode = mode
+
         if mode != self.control_mode:
             _LOGGER.info("Control mode gewijzigd van '%s' naar '%s'", self.control_mode, mode)
             self.control_mode = mode
+            async_dispatcher_send(self.hass, "ctrl_next_update")
 
     def get_control_mode(self) -> str:
         return self.control_mode
 
     def set_grid_charge_enabled(self, enabled: bool):
         self.grid_charge_enabled = enabled
+        if self.operating_mode != OPERATING_MODE_SMART:
+            self._capture_manual_control_settings()
+        async_dispatcher_send(self.hass, "ctrl_next_update")
 
     def get_grid_charge_enabled(self) -> bool:
         return self.grid_charge_enabled
@@ -531,8 +572,28 @@ class CtrlNextController:
             "expected_import_w": [],
             "mode": [],
             "reasons": [],
+            "control_mode": [],
+            "peak_shaving_limit_w": [],
+            "grid_charge_enabled": [],
+            "grid_charge_target_soc": [],
+            "grid_charge_max_power_w": [],
+            "min_discharge_soc": [],
+            "scenario": [],
             "profile_quality": "nog niet berekend",
             "generated_at": None,
+        }
+
+    def _empty_smart_profile(self):
+        return {
+            "timestamp": None,
+            "scenario": "nog niet berekend",
+            "control_mode": CONTROL_MODE_PEAK_SHAVING,
+            "peak_shaving_limit_w": self.planner_import_limit_w,
+            "grid_charge_enabled": False,
+            "grid_charge_target_soc": 0.0,
+            "grid_charge_max_power_w": 0.0,
+            "min_discharge_soc": self.planner_min_reserve_soc,
+            "period": None,
         }
 
     def _get_average_soc(self, soc=None):
@@ -667,6 +728,7 @@ class CtrlNextController:
         self.smart_plan["profile_quality"] = profile_quality
         self.smart_plan["generated_at"] = now.isoformat()
         self._last_plan_refresh = now
+        self.smart_active_profile = self._get_current_smart_profile(now)
         async_dispatcher_send(self.hass, _SMART_PLAN_DISPATCH)
 
     async def _send_plan_notification_if_needed(self):
@@ -836,19 +898,54 @@ class CtrlNextController:
         )
 
     def _smart_min_discharge_soc(self):
-        now = datetime.now().astimezone()
-        period = period_for_timestamp(now)
-        if period in ("morning_peak", "evening_peak"):
-            return self.planner_min_reserve_soc
-        if now.time() < SUPER_DAL_END:
-            return max(self.planner_min_reserve_soc, self.smart_plan.get("target_soc_after_super_dal", 0))
-        if now.time() < MORNING_PEAK_START:
-            return max(self.planner_min_reserve_soc, self.smart_plan.get("target_soc_morning", 0))
-        if now.time() < EVENING_PEAK_START:
-            return max(self.planner_min_reserve_soc, self.smart_plan.get("target_soc_evening", 0))
-        if now.time() >= EVENING_PEAK_END:
-            return max(self.planner_min_reserve_soc, self.smart_plan.get("target_soc_morning", 0))
-        return self.planner_min_reserve_soc
+        return self.smart_active_profile.get("min_discharge_soc", self.planner_min_reserve_soc)
+
+    def _get_plan_value(self, key, idx, default):
+        values = self.smart_plan.get(key, [])
+        if idx < len(values):
+            return values[idx]
+        return default
+
+    def _get_current_smart_profile(self, now=None):
+        now = now or datetime.now().astimezone()
+        timestamps = self.smart_plan.get("timestamps", [])
+        if not timestamps:
+            return self._empty_smart_profile()
+
+        selected_idx = len(timestamps) - 1
+        for idx, value in enumerate(timestamps):
+            try:
+                ts = datetime.fromisoformat(value)
+            except (TypeError, ValueError):
+                continue
+            if ts >= now:
+                selected_idx = idx
+                break
+
+        return {
+            "timestamp": self._get_plan_value("timestamps", selected_idx, None),
+            "scenario": self._get_plan_value("scenario", selected_idx, "hold_reserve"),
+            "control_mode": self._get_plan_value("control_mode", selected_idx, CONTROL_MODE_PEAK_SHAVING),
+            "peak_shaving_limit_w": float(self._get_plan_value("peak_shaving_limit_w", selected_idx, self.planner_import_limit_w)),
+            "grid_charge_enabled": bool(self._get_plan_value("grid_charge_enabled", selected_idx, False)),
+            "grid_charge_target_soc": float(self._get_plan_value("grid_charge_target_soc", selected_idx, 0.0)),
+            "grid_charge_max_power_w": float(self._get_plan_value("grid_charge_max_power_w", selected_idx, 0.0)),
+            "min_discharge_soc": float(self._get_plan_value("min_discharge_soc", selected_idx, self.planner_min_reserve_soc)),
+            "period": self._get_plan_value("mode", selected_idx, None),
+        }
+
+    def _set_smart_active_profile(self, profile):
+        if profile == self.smart_active_profile:
+            return
+        self.smart_active_profile = profile
+        async_dispatcher_send(self.hass, _SMART_PLAN_DISPATCH)
+
+    def _apply_smart_profile_settings(self, profile):
+        self.set_control_mode(profile["control_mode"], remember_manual=False)
+        self.peak_shaving_limit_w = profile["peak_shaving_limit_w"]
+        self.grid_charge_enabled = profile["grid_charge_enabled"]
+        self.grid_charge_target_soc = profile["grid_charge_target_soc"]
+        self.grid_charge_max_power_w = profile["grid_charge_max_power_w"]
 
     async def _run_smart_cycle(self):
         await self._refresh_smart_plan(force=False)
@@ -856,43 +953,18 @@ class CtrlNextController:
         _, huisverbruik, soc = await self._collect_power_state()
 
         now = datetime.now().astimezone()
-        period = period_for_timestamp(now)
-        avg_soc = self._get_average_soc(soc)
-        min_discharge_soc = self._smart_min_discharge_soc()
-        import_limit_w = max(self.planner_import_limit_w, 0.0)
-        control_power = 0.0
-        grid_charge_request = 0.0
-        regel_huisverbruik = 0.0
+        profile = self._get_current_smart_profile(now)
+        self._set_smart_active_profile(profile)
+        self._apply_smart_profile_settings(profile)
 
-        if huisverbruik < 0:
-            control_power = huisverbruik
-            regel_huisverbruik = huisverbruik
-        elif period == "super_dal":
-            if huisverbruik > import_limit_w:
-                control_power = huisverbruik - import_limit_w
-                regel_huisverbruik = control_power
-            elif avg_soc < self.smart_plan.get("target_soc_after_super_dal", 0):
-                headroom = max(import_limit_w - max(huisverbruik, 0.0), 0.0)
-                grid_charge_request = min(self.grid_charge_max_power_w, headroom)
-                control_power = -grid_charge_request
-                regel_huisverbruik = 0.0
-            elif avg_soc > min_discharge_soc + 1 and huisverbruik > 0:
-                control_power = huisverbruik
-                regel_huisverbruik = huisverbruik
-        elif period in ("morning_peak", "evening_peak"):
-            control_power = huisverbruik
-            regel_huisverbruik = huisverbruik
-        else:
-            if huisverbruik > import_limit_w:
-                control_power = huisverbruik - import_limit_w
-                regel_huisverbruik = control_power
-            elif avg_soc > min_discharge_soc + 1 and huisverbruik > 0:
-                control_power = huisverbruik
-                regel_huisverbruik = huisverbruik
+        min_discharge_soc = self._smart_min_discharge_soc()
+        regel_huisverbruik = self._get_regel_huisverbruik(huisverbruik)
+        grid_charge_request = self._get_grid_charge_request(huisverbruik, soc)
+        control_power = regel_huisverbruik - grid_charge_request
 
         charge_target_soc = _SOC_MAX_CHARGE
-        if period == "super_dal" and grid_charge_request > 0:
-            charge_target_soc = self.smart_plan.get("target_soc_after_super_dal", _SOC_MAX_CHARGE)
+        if profile["grid_charge_enabled"]:
+            charge_target_soc = profile["grid_charge_target_soc"]
 
         await self._apply_control_cycle(
             control_power,

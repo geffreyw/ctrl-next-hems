@@ -1,4 +1,5 @@
 from homeassistant.components.select import SelectEntity
+from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.restore_state import RestoreEntity
 
 from .const import (
@@ -37,6 +38,9 @@ class HemsOperatingModeSelect(RestoreEntity, SelectEntity):
 
     async def async_added_to_hass(self):
         await super().async_added_to_hass()
+        self.async_on_remove(
+            async_dispatcher_connect(self.hass, "ctrl_next_update", self.async_write_ha_state)
+        )
         last_state = await self.async_get_last_state()
         if last_state and last_state.state in OPERATING_MODES:
             await self._controller.set_operating_mode(last_state.state)
@@ -74,6 +78,9 @@ class HemsControlModeSelect(RestoreEntity, SelectEntity):
 
     async def async_added_to_hass(self):
         await super().async_added_to_hass()
+        self.async_on_remove(
+            async_dispatcher_connect(self.hass, "ctrl_next_update", self.async_write_ha_state)
+        )
         last_state = await self.async_get_last_state()
         if last_state and last_state.state in CONTROL_MODES:
             self._controller.set_control_mode(last_state.state)
