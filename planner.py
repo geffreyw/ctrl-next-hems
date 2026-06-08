@@ -214,6 +214,10 @@ def build_plan(inputs: PlannerInputs) -> dict:
             slot_grid_target_soc = target_after_super_dal_soc
             slot_scenario = SCENARIO_SUPERDAL_CHARGE if slot_grid_charge else SCENARIO_HOLD_RESERVE
             slot_reason = "superdal laden binnen importlimiet"
+            if not slot_grid_charge and net_load > inputs.import_limit_w:
+                protected_kwh = reserve_kwh
+                slot_scenario = SCENARIO_LIMIT_IMPORT
+                slot_reason = "import begrenzen tijdens superdal"
         else:
             if ts.time() < SUPER_DAL_END:
                 protected_kwh = target_after_super_dal_kwh
@@ -276,11 +280,23 @@ def build_plan(inputs: PlannerInputs) -> dict:
     free_surplus_kwh = max(current_energy_kwh - target_after_super_dal_kwh, 0.0)
     current_headroom_w = max(inputs.import_limit_w - (load_w[0] if load_w else 0.0), 0.0)
     planned_grid_charge_power_w = min(inputs.max_grid_charge_power_w, current_headroom_w) if grid_charge_needed_kwh > 0 else 0.0
+    planned_grid_charge_kwh = sum(value * 0.25 / 1000.0 for value in grid_charge_max_power_w)
 
-    if grid_charge_needed_kwh > 0:
+    if grid_charge_needed_kwh > 0 and planned_grid_charge_kwh > 0:
+        if planned_grid_charge_kwh + 0.01 < grid_charge_needed_kwh:
+            summary = (
+                f"Smart kan {planned_grid_charge_kwh:.2f} van {grid_charge_needed_kwh:.2f} kWh "
+                "superdal-laden plannen binnen max netlaadvermogen en importlimiet."
+            )
+        else:
+            summary = (
+                f"Smart plant {grid_charge_needed_kwh:.2f} kWh superdal-laden tot "
+                f"{target_after_super_dal_kwh / total_capacity_kwh * 100:.0f}% om piekuren te dekken."
+            )
+    elif grid_charge_needed_kwh > 0:
         summary = (
-            f"Smart plant {grid_charge_needed_kwh:.2f} kWh superdal-laden tot "
-            f"{target_after_super_dal_kwh / total_capacity_kwh * 100:.0f}% om piekuren te dekken."
+            f"Smart heeft {grid_charge_needed_kwh:.2f} kWh superdal-laden nodig, "
+            "maar er is geen laadvermogen gepland. Controleer max netlaadvermogen en importlimiet."
         )
     else:
         summary = (
@@ -295,6 +311,7 @@ def build_plan(inputs: PlannerInputs) -> dict:
         "target_soc_after_super_dal": round(target_after_super_dal_kwh / total_capacity_kwh * 100.0, 0),
         "grid_charge_needed_kwh": round(grid_charge_needed_kwh, 2),
         "planned_grid_charge_power_w": round(planned_grid_charge_power_w, 0),
+        "planned_grid_charge_kwh": round(planned_grid_charge_kwh, 2),
         "current_headroom_w": round(current_headroom_w, 0),
         "expected_min_soc": round(expected_min_soc, 1),
         "free_surplus_kwh": round(free_surplus_kwh, 2),

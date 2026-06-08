@@ -290,6 +290,7 @@ class PlanSummarySensor(_CtrlNextSensorBase, SensorEntity):
             "target_soc_after_super_dal": plan.get("target_soc_after_super_dal"),
             "grid_charge_needed_kwh": plan.get("grid_charge_needed_kwh"),
             "planned_grid_charge_power_w": plan.get("planned_grid_charge_power_w"),
+            "planned_grid_charge_kwh": plan.get("planned_grid_charge_kwh"),
             "current_headroom_w": plan.get("current_headroom_w"),
             "expected_min_soc": plan.get("expected_min_soc"),
             "free_surplus_kwh": plan.get("free_surplus_kwh"),

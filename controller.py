@@ -392,16 +392,30 @@ class CtrlNextController:
     def _get_grid_charge_target_soc(self):
         return max(0.0, min(self.grid_charge_target_soc, _SOC_MAX_CHARGE))
 
+    def _get_effective_grid_charge_settings(self):
+        if self.operating_mode == OPERATING_MODE_SMART:
+            return (
+                bool(self.smart_active_profile.get("grid_charge_enabled", False)),
+                max(0.0, min(float(self.smart_active_profile.get("grid_charge_target_soc", 0.0)), _SOC_MAX_CHARGE)),
+                max(float(self.smart_active_profile.get("grid_charge_max_power_w", 0.0)), 0.0),
+            )
+
+        return (
+            self.grid_charge_enabled,
+            self._get_grid_charge_target_soc(),
+            max(self.grid_charge_max_power_w, 0.0),
+        )
+
     def _get_grid_charge_request(self, huisverbruik, soc):
-        if not self.grid_charge_enabled:
+        grid_charge_enabled, target_soc, max_grid_charge_power_w = self._get_effective_grid_charge_settings()
+        if not grid_charge_enabled:
             return 0.0
 
-        target_soc = self._get_grid_charge_target_soc()
         if not any(soc[idx] < target_soc for idx in ["1", "2"]):
             return 0.0
 
         grid_headroom = max(self._get_mode_import_limit() - max(huisverbruik, 0.0), 0.0)
-        return min(grid_headroom, self.grid_charge_max_power_w)
+        return min(grid_headroom, max_grid_charge_power_w)
 
     def _get_regel_huisverbruik(self, huisverbruik):
         if self.control_mode != CONTROL_MODE_PEAK_SHAVING:
@@ -559,6 +573,7 @@ class CtrlNextController:
             "target_soc_after_super_dal": 0,
             "grid_charge_needed_kwh": 0,
             "planned_grid_charge_power_w": 0,
+            "planned_grid_charge_kwh": 0,
             "current_headroom_w": 0,
             "expected_min_soc": 0,
             "free_surplus_kwh": 0,
@@ -943,9 +958,6 @@ class CtrlNextController:
     def _apply_smart_profile_settings(self, profile):
         self.set_control_mode(profile["control_mode"], remember_manual=False)
         self.peak_shaving_limit_w = profile["peak_shaving_limit_w"]
-        self.grid_charge_enabled = profile["grid_charge_enabled"]
-        self.grid_charge_target_soc = profile["grid_charge_target_soc"]
-        self.grid_charge_max_power_w = profile["grid_charge_max_power_w"]
 
     async def _run_smart_cycle(self):
         await self._refresh_smart_plan(force=False)
