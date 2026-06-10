@@ -115,6 +115,10 @@ _SOC_MAX_CHARGE    = 99.0
 _HOMEWIZARD_DATA_PATH = "/api/v1/data"
 _P1_HTTP_TIMEOUT_SECONDS = 2.0
 _SMART_PLAN_DISPATCH = "ctrl_next_plan_update"
+_FORECAST_CACHE_MAX_AGE = timedelta(hours=3)
+_FORECAST_QUALITY_LIVE = "live"
+_FORECAST_QUALITY_CACHED = "cached"
+_FORECAST_QUALITY_FALLBACK_ZERO = "fallback_zero"
 
 DEFAULT_CONFIG = {
     CONF_P1_SENSOR: DEFAULT_P1_SENSOR,
@@ -220,6 +224,7 @@ class CtrlNextController:
         self.last_power = {"1": 0.0, "2": 0.0}
         self.smart_plan = self._empty_plan()
         self.smart_active_profile = self._empty_smart_profile()
+        self._forecast_cache = {}
         self._manual_control_settings = {}
         self._capture_manual_control_settings()
         self._last_plan_refresh = None
@@ -320,6 +325,27 @@ class CtrlNextController:
             except ValueError: 
                 return 0.0
         return 0.0
+
+    def _get_cached_float_state(self, entity_id, cache_key, now, max_age):
+        if entity_id:
+            state = self.hass.states.get(entity_id)
+            if state and state.state not in ["unknown", "unavailable", ""]:
+                try:
+                    value = float(state.state)
+                except (TypeError, ValueError):
+                    pass
+                else:
+                    self._forecast_cache[cache_key] = {
+                        "value": value,
+                        "cached_at": now,
+                    }
+                    return value, _FORECAST_QUALITY_LIVE, None
+
+        cached = self._forecast_cache.get(cache_key)
+        if cached and now - cached["cached_at"] <= max_age:
+            return cached["value"], _FORECAST_QUALITY_CACHED, cached["cached_at"]
+
+        return 0.0, _FORECAST_QUALITY_FALLBACK_ZERO, None
 
     def _get_battery_entities(self, bat_idx):
         mapping = {
@@ -629,6 +655,9 @@ class CtrlNextController:
             "min_discharge_soc": [],
             "scenario": [],
             "profile_quality": "nog niet berekend",
+            "forecast_quality": "nog niet berekend",
+            "forecast_cached_since": None,
+            "forecast_cache_age_minutes": None,
             "generated_at": None,
         }
 
@@ -669,6 +698,92 @@ class CtrlNextController:
             return datetime.fromisoformat(state.state)
         except ValueError:
             return None
+
+    def _get_cached_datetime_state(self, entity_id, cache_key, now, max_age):
+        if entity_id:
+            state = self.hass.states.get(entity_id)
+            if state and state.state not in ["unknown", "unavailable", ""]:
+                try:
+                    value = datetime.fromisoformat(state.state)
+                except (TypeError, ValueError):
+                    pass
+                else:
+                    self._forecast_cache[cache_key] = {
+                        "value": value,
+                        "cached_at": now,
+                    }
+                    return value, _FORECAST_QUALITY_LIVE, None
+
+        cached = self._forecast_cache.get(cache_key)
+        if cached and now - cached["cached_at"] <= max_age:
+            return cached["value"], _FORECAST_QUALITY_CACHED, cached["cached_at"]
+
+        return None, _FORECAST_QUALITY_FALLBACK_ZERO, None
+
+    def _get_forecast_inputs(self, now):
+        remaining_today, remaining_quality, remaining_cached_at = self._get_cached_float_state(
+            self.config.get(CONF_FORECAST_SOLAR_REMAINING_TODAY),
+            "forecast_remaining_today_kwh",
+            now,
+            _FORECAST_CACHE_MAX_AGE,
+        )
+        tomorrow, tomorrow_quality, tomorrow_cached_at = self._get_cached_float_state(
+            self.config.get(CONF_FORECAST_SOLAR_TOMORROW),
+            "forecast_tomorrow_kwh",
+            now,
+            _FORECAST_CACHE_MAX_AGE,
+        )
+        peak_today, peak_today_quality, peak_today_cached_at = self._get_cached_datetime_state(
+            self.config.get(CONF_FORECAST_SOLAR_PEAK_TODAY),
+            "forecast_peak_today",
+            now,
+            _FORECAST_CACHE_MAX_AGE,
+        )
+        peak_tomorrow, peak_tomorrow_quality, peak_tomorrow_cached_at = self._get_cached_datetime_state(
+            self.config.get(CONF_FORECAST_SOLAR_PEAK_TOMORROW),
+            "forecast_peak_tomorrow",
+            now,
+            _FORECAST_CACHE_MAX_AGE,
+        )
+
+        qualities = [
+            remaining_quality,
+            tomorrow_quality,
+            peak_today_quality,
+            peak_tomorrow_quality,
+        ]
+        cached_at_values = [
+            cached_at
+            for cached_at in [
+                remaining_cached_at,
+                tomorrow_cached_at,
+                peak_today_cached_at,
+                peak_tomorrow_cached_at,
+            ]
+            if cached_at is not None
+        ]
+
+        if _FORECAST_QUALITY_FALLBACK_ZERO in qualities:
+            forecast_quality = _FORECAST_QUALITY_FALLBACK_ZERO
+        elif _FORECAST_QUALITY_CACHED in qualities:
+            forecast_quality = _FORECAST_QUALITY_CACHED
+        else:
+            forecast_quality = _FORECAST_QUALITY_LIVE
+
+        cached_since = min(cached_at_values) if cached_at_values else None
+        cache_age_minutes = None
+        if cached_since is not None:
+            cache_age_minutes = round((now - cached_since).total_seconds() / 60.0)
+
+        return {
+            "forecast_remaining_today_kwh": remaining_today,
+            "forecast_tomorrow_kwh": tomorrow,
+            "forecast_peak_today": peak_today,
+            "forecast_peak_tomorrow": peak_tomorrow,
+            "forecast_quality": forecast_quality,
+            "forecast_cached_since": cached_since.isoformat() if cached_since else None,
+            "forecast_cache_age_minutes": cache_age_minutes,
+        }
 
     async def _get_load_profile(self):
         fallback = max(self.huisverbruik_value, self._get_float_state(self.config.get(CONF_P1_SENSOR)), 300.0)
@@ -758,6 +873,7 @@ class CtrlNextController:
             "1": self._get_float_state(self.config.get(CONF_BATTERY_1_SOC)),
             "2": self._get_float_state(self.config.get(CONF_BATTERY_2_SOC)),
         }
+        forecast_inputs = self._get_forecast_inputs(now)
         inputs = PlannerInputs(
             now=now,
             current_soc_pct=self._get_average_soc(soc),
@@ -767,14 +883,17 @@ class CtrlNextController:
             safety_margin_pct=self.planner_safety_margin_pct,
             import_limit_w=self.planner_import_limit_w,
             max_grid_charge_power_w=self.grid_charge_max_power_w,
-            forecast_remaining_today_kwh=self._get_float_state(self.config.get(CONF_FORECAST_SOLAR_REMAINING_TODAY)),
-            forecast_tomorrow_kwh=self._get_float_state(self.config.get(CONF_FORECAST_SOLAR_TOMORROW)),
-            forecast_peak_today=self._get_datetime_state(self.config.get(CONF_FORECAST_SOLAR_PEAK_TODAY)),
-            forecast_peak_tomorrow=self._get_datetime_state(self.config.get(CONF_FORECAST_SOLAR_PEAK_TOMORROW)),
+            forecast_remaining_today_kwh=forecast_inputs["forecast_remaining_today_kwh"],
+            forecast_tomorrow_kwh=forecast_inputs["forecast_tomorrow_kwh"],
+            forecast_peak_today=forecast_inputs["forecast_peak_today"],
+            forecast_peak_tomorrow=forecast_inputs["forecast_peak_tomorrow"],
             load_profile_w=load_profile,
         )
         self.smart_plan = build_plan(inputs)
         self.smart_plan["profile_quality"] = profile_quality
+        self.smart_plan["forecast_quality"] = forecast_inputs["forecast_quality"]
+        self.smart_plan["forecast_cached_since"] = forecast_inputs["forecast_cached_since"]
+        self.smart_plan["forecast_cache_age_minutes"] = forecast_inputs["forecast_cache_age_minutes"]
         self.smart_plan["generated_at"] = now.isoformat()
         self._last_plan_refresh = now
         self.smart_active_profile = self._get_current_smart_profile(now)

@@ -47,6 +47,7 @@ Na installatie maakt de integratie entiteiten aan onder één apparaat (`CTRL-NE
 - HEMS Plan Summary
   - Samenvatting van het Smart-plan dat om 21:00 ook als melding wordt verstuurd.
   - Attributen bevatten de kwartierverwachting voor SoC, verwacht verbruik, verwachte solar, verwachte import en geplande HEMS control mode.
+  - Bij tijdelijke Forecast.Solar-uitval gebruikt Smart maximaal 3 uur de laatst geldige forecastwaarden. De attributen `forecast_quality`, `forecast_cached_since` en `forecast_cache_age_minutes` tonen of het plan live, cached of fallbackwaarden gebruikt.
 
 - HEMS Plan Doel SoC Ochtendpiek
 - HEMS Plan Doel SoC Avondpiek
