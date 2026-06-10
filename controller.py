@@ -927,14 +927,15 @@ class CtrlNextController:
         if not timestamps:
             return self._empty_smart_profile()
 
-        selected_idx = len(timestamps) - 1
+        selected_idx = 0
         for idx, value in enumerate(timestamps):
             try:
                 ts = datetime.fromisoformat(value)
             except (TypeError, ValueError):
                 continue
-            if ts >= now:
+            if ts <= now:
                 selected_idx = idx
+            else:
                 break
 
         return {
