@@ -77,6 +77,8 @@ from .const import (
     DEFAULT_PLANNER_MIN_RESERVE_SOC,
     DEFAULT_PLANNER_NOTIFY_SERVICE,
     DEFAULT_PLANNER_SAFETY_MARGIN_PCT,
+    FORECAST_SOLAR_ENTITY_FALLBACKS,
+    LEGACY_FORECAST_SOLAR_ENTITY_IDS,
     OPERATING_MODE_MANUAL,
     OPERATING_MODE_OFF,
     OPERATING_MODE_SMART,
@@ -154,6 +156,7 @@ class CtrlNextController:
     def __init__(self, hass: HomeAssistant, config_data: dict):
         self.hass = hass
         self.config = {**DEFAULT_CONFIG, **config_data}
+        self._apply_forecast_solar_entity_fallbacks()
         self.running = False
         self.operating_mode = self.config.get(CONF_OPERATING_MODE, DEFAULT_OPERATING_MODE)
         if self.operating_mode not in OPERATING_MODES:
@@ -221,6 +224,37 @@ class CtrlNextController:
         self._capture_manual_control_settings()
         self._last_plan_refresh = None
         self._last_plan_notification_date = None
+
+    def _apply_forecast_solar_entity_fallbacks(self):
+        for config_key, candidates in FORECAST_SOLAR_ENTITY_FALLBACKS.items():
+            configured_entity_id = self.config.get(config_key)
+            configured_state = self.hass.states.get(configured_entity_id) if configured_entity_id else None
+            if self._is_usable_state(configured_state):
+                continue
+
+            legacy_entity_ids = LEGACY_FORECAST_SOLAR_ENTITY_IDS.get(config_key, ())
+            should_fallback = not configured_entity_id or configured_entity_id in legacy_entity_ids
+            if not should_fallback:
+                continue
+
+            for candidate_entity_id in candidates:
+                candidate_state = self.hass.states.get(candidate_entity_id)
+                if not self._is_usable_state(candidate_state):
+                    continue
+
+                if configured_entity_id != candidate_entity_id:
+                    _LOGGER.warning(
+                        "Forecast.Solar entiteit '%s' voor '%s' is niet bruikbaar; gebruik fallback '%s'",
+                        configured_entity_id,
+                        config_key,
+                        candidate_entity_id,
+                    )
+                self.config[config_key] = candidate_entity_id
+                break
+
+    @staticmethod
+    def _is_usable_state(state):
+        return state is not None and state.state not in ("unknown", "unavailable")
 
     async def start(self):
         self.running = True

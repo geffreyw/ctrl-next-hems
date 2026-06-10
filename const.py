@@ -59,15 +59,84 @@ CONF_FORECAST_SOLAR_POWER_IN_24H = "forecast_solar_power_in_24h"
 CONF_FORECAST_SOLAR_PEAK_TODAY = "forecast_solar_peak_today"
 CONF_FORECAST_SOLAR_PEAK_TOMORROW = "forecast_solar_peak_tomorrow"
 
-DEFAULT_FORECAST_SOLAR_TODAY = "sensor.solar_production_forecast_estimated_energy_production_today"
-DEFAULT_FORECAST_SOLAR_REMAINING_TODAY = "sensor.solar_production_forecast_estimated_energy_production_remaining_today"
-DEFAULT_FORECAST_SOLAR_TOMORROW = "sensor.solar_production_forecast_estimated_energy_production_tomorrow"
-DEFAULT_FORECAST_SOLAR_THIS_HOUR = "sensor.solar_production_forecast_estimated_energy_production_this_hour"
-DEFAULT_FORECAST_SOLAR_NEXT_HOUR = "sensor.solar_production_forecast_estimated_energy_production_next_hour"
-DEFAULT_FORECAST_SOLAR_POWER_NOW = "sensor.solar_production_forecast_estimated_power_production_now"
-DEFAULT_FORECAST_SOLAR_POWER_IN_24H = "sensor.solar_production_forecast_estimated_power_production_in_24_hours"
-DEFAULT_FORECAST_SOLAR_PEAK_TODAY = "sensor.solar_production_forecast_highest_power_peak_time_today"
-DEFAULT_FORECAST_SOLAR_PEAK_TOMORROW = "sensor.solar_production_forecast_highest_power_peak_time_tomorrow"
+DEFAULT_FORECAST_SOLAR_TODAY = "sensor.energy_production_today"
+DEFAULT_FORECAST_SOLAR_REMAINING_TODAY = "sensor.energy_production_today_remaining"
+DEFAULT_FORECAST_SOLAR_TOMORROW = "sensor.energy_production_tomorrow"
+DEFAULT_FORECAST_SOLAR_THIS_HOUR = "sensor.energy_current_hour"
+DEFAULT_FORECAST_SOLAR_NEXT_HOUR = "sensor.energy_next_hour"
+DEFAULT_FORECAST_SOLAR_POWER_NOW = "sensor.power_production_now"
+DEFAULT_FORECAST_SOLAR_POWER_IN_24H = "sensor.power_production_next_24hours"
+DEFAULT_FORECAST_SOLAR_PEAK_TODAY = "sensor.power_highest_peak_time_today"
+DEFAULT_FORECAST_SOLAR_PEAK_TOMORROW = "sensor.power_highest_peak_time_tomorrow"
+
+LEGACY_FORECAST_SOLAR_ENTITY_IDS = {
+    CONF_FORECAST_SOLAR_TODAY: (
+        "sensor.solar_production_forecast_estimated_energy_production_today",
+    ),
+    CONF_FORECAST_SOLAR_REMAINING_TODAY: (
+        "sensor.solar_production_forecast_estimated_energy_production_remaining_today",
+    ),
+    CONF_FORECAST_SOLAR_TOMORROW: (
+        "sensor.solar_production_forecast_estimated_energy_production_tomorrow",
+    ),
+    CONF_FORECAST_SOLAR_THIS_HOUR: (
+        "sensor.solar_production_forecast_estimated_energy_production_this_hour",
+    ),
+    CONF_FORECAST_SOLAR_NEXT_HOUR: (
+        "sensor.solar_production_forecast_estimated_energy_production_next_hour",
+    ),
+    CONF_FORECAST_SOLAR_POWER_NOW: (
+        "sensor.solar_production_forecast_estimated_power_production_now",
+    ),
+    CONF_FORECAST_SOLAR_POWER_IN_24H: (
+        "sensor.solar_production_forecast_estimated_power_production_in_24_hours",
+    ),
+    CONF_FORECAST_SOLAR_PEAK_TODAY: (
+        "sensor.solar_production_forecast_highest_power_peak_time_today",
+    ),
+    CONF_FORECAST_SOLAR_PEAK_TOMORROW: (
+        "sensor.solar_production_forecast_highest_power_peak_time_tomorrow",
+    ),
+}
+
+FORECAST_SOLAR_ENTITY_FALLBACKS = {
+    CONF_FORECAST_SOLAR_TODAY: (
+        DEFAULT_FORECAST_SOLAR_TODAY,
+        *LEGACY_FORECAST_SOLAR_ENTITY_IDS[CONF_FORECAST_SOLAR_TODAY],
+    ),
+    CONF_FORECAST_SOLAR_REMAINING_TODAY: (
+        DEFAULT_FORECAST_SOLAR_REMAINING_TODAY,
+        *LEGACY_FORECAST_SOLAR_ENTITY_IDS[CONF_FORECAST_SOLAR_REMAINING_TODAY],
+    ),
+    CONF_FORECAST_SOLAR_TOMORROW: (
+        DEFAULT_FORECAST_SOLAR_TOMORROW,
+        *LEGACY_FORECAST_SOLAR_ENTITY_IDS[CONF_FORECAST_SOLAR_TOMORROW],
+    ),
+    CONF_FORECAST_SOLAR_THIS_HOUR: (
+        DEFAULT_FORECAST_SOLAR_THIS_HOUR,
+        *LEGACY_FORECAST_SOLAR_ENTITY_IDS[CONF_FORECAST_SOLAR_THIS_HOUR],
+    ),
+    CONF_FORECAST_SOLAR_NEXT_HOUR: (
+        DEFAULT_FORECAST_SOLAR_NEXT_HOUR,
+        *LEGACY_FORECAST_SOLAR_ENTITY_IDS[CONF_FORECAST_SOLAR_NEXT_HOUR],
+    ),
+    CONF_FORECAST_SOLAR_POWER_NOW: (
+        DEFAULT_FORECAST_SOLAR_POWER_NOW,
+        *LEGACY_FORECAST_SOLAR_ENTITY_IDS[CONF_FORECAST_SOLAR_POWER_NOW],
+    ),
+    CONF_FORECAST_SOLAR_POWER_IN_24H: (
+        DEFAULT_FORECAST_SOLAR_POWER_IN_24H,
+        *LEGACY_FORECAST_SOLAR_ENTITY_IDS[CONF_FORECAST_SOLAR_POWER_IN_24H],
+    ),
+    CONF_FORECAST_SOLAR_PEAK_TODAY: (
+        DEFAULT_FORECAST_SOLAR_PEAK_TODAY,
+        *LEGACY_FORECAST_SOLAR_ENTITY_IDS[CONF_FORECAST_SOLAR_PEAK_TODAY],
+    ),
+    CONF_FORECAST_SOLAR_PEAK_TOMORROW: (
+        DEFAULT_FORECAST_SOLAR_PEAK_TOMORROW,
+        *LEGACY_FORECAST_SOLAR_ENTITY_IDS[CONF_FORECAST_SOLAR_PEAK_TOMORROW],
+    ),
+}
 
 # Batterij 1
 CONF_BATTERY_1_SOC = "battery_1_soc"
