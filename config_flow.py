@@ -18,17 +18,18 @@ def _entity_field(current, key, default, domain):
 
 
 def _number_field(current, key, default, minimum, maximum, step, unit=None):
+    config = selector.NumberSelectorConfig(
+        min=minimum,
+        max=maximum,
+        step=step,
+        mode=selector.NumberSelectorMode.BOX,
+    )
+    if unit is not None:
+        config["unit_of_measurement"] = unit
+
     return (
         vol.Optional(key, default=_current_value(current, key, default)),
-        selector.NumberSelector(
-            selector.NumberSelectorConfig(
-                min=minimum,
-                max=maximum,
-                step=step,
-                mode=selector.NumberSelectorMode.BOX,
-                unit_of_measurement=unit,
-            )
-        ),
+        selector.NumberSelector(config),
     )
 
 
